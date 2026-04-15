@@ -35,22 +35,6 @@ export const NO_FLY_ZONES = [
   { name: "Hormuz caution", west: 52, south: 23, east: 58, north: 28, kind: "medium" },
 ];
 
-export const COUNTRY_LABELS = [
-  { name: "United States", lon: -98, lat: 39 },
-  { name: "United Kingdom", lon: -2, lat: 54 },
-  { name: "Germany", lon: 10, lat: 51 },
-  { name: "Egypt", lon: 30, lat: 27 },
-  { name: "Iran", lon: 53, lat: 32 },
-  { name: "Russia", lon: 95, lat: 60 },
-  { name: "India", lon: 79, lat: 22 },
-  { name: "China", lon: 104, lat: 35 },
-  { name: "North Korea", lon: 127, lat: 40.1 },
-  { name: "South Korea", lon: 127.5, lat: 36.2 },
-  { name: "Japan", lon: 138, lat: 37 },
-  { name: "Taiwan", lon: 121, lat: 23.7 },
-  { name: "Singapore", lon: 103.8, lat: 1.3 },
-];
-
 export const CITY_LABELS = [
   { name: "New York", lon: -74.0, lat: 40.71, tier: 1 },
   { name: "London", lon: -0.12, lat: 51.5, tier: 1 },

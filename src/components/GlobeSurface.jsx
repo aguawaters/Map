@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { feature } from "topojson-client";
-import { geoDistance, geoGraticule10, geoOrthographic, geoPath } from "d3-geo";
+import { geoCentroid, geoDistance, geoGraticule10, geoOrthographic, geoPath } from "d3-geo";
 import countriesAtlas from "world-atlas/countries-110m.json";
 import { Globe as GlobeIcon, LocateFixed, Plane, RotateCcw, Satellite, Ship } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CHOKEPOINTS, CITY_LABELS, COUNTRY_LABELS, NO_FLY_ZONES, REGION_KEYS, REGION_PRESETS } from "@/data/constants";
+import { CHOKEPOINTS, CITY_LABELS, NO_FLY_ZONES, REGION_KEYS, REGION_PRESETS } from "@/data/constants";
 import { AIRPORTS, AIR_ROUTES, PORTS, SEA_LANES } from "@/data/mockAssets";
 import { buildArcPoints } from "@/lib/geo";
 import { pointColor } from "@/lib/styles";
@@ -24,6 +24,13 @@ export function GlobeSurface({ tracks, selectedId, onSelect, regionKey, setRegio
   const rafRef = useRef(null);
   const interactionTimerRef = useRef(null);
   const countryFeatures = useMemo(() => feature(countriesAtlas, countriesAtlas.objects.countries).features, []);
+  const countryLabelAnchors = useMemo(() => countryFeatures
+    .map((country) => {
+      const [lon, lat] = geoCentroid(country);
+      const name = country.properties?.name;
+      return name && Number.isFinite(lon) && Number.isFinite(lat) ? { id: country.id || name, name, lon, lat } : null;
+    })
+    .filter(Boolean), [countryFeatures]);
   const [view, setView] = useState(() => {
     const preset = REGION_PRESETS[regionKey] || REGION_PRESETS.global;
     return { lon: preset.lng, lat: preset.lat, scale: Math.round(260 / preset.altitude) };
@@ -111,13 +118,13 @@ export function GlobeSurface({ tracks, selectedId, onSelect, regionKey, setRegio
 
   const projectedCountryLabels = useMemo(() => {
     if (!display.labels || mapMoving) return [];
-    return COUNTRY_LABELS.filter((item) => isFront(item.lon, item.lat))
+    return countryLabelAnchors.filter((item) => isFront(item.lon, item.lat))
       .map((item) => {
         const point = projectPoint(projection, item.lon, item.lat);
         return point ? { ...item, x: point[0], y: point[1] } : null;
       })
       .filter(Boolean);
-  }, [display.labels, mapMoving, projection, view.lat, view.lon]);
+  }, [countryLabelAnchors, display.labels, mapMoving, projection, view.lat, view.lon]);
 
   const projectedCityLabels = useMemo(() => {
     if (!display.labels || mapMoving || view.scale <= 360) return [];
@@ -302,8 +309,15 @@ export function GlobeSurface({ tracks, selectedId, onSelect, regionKey, setRegio
             })}
 
             {projectedCountryLabels.map((label) => (
-              <text key={label.name} x={label.x} y={label.y} textAnchor="middle" fill="rgba(255,255,255,0.84)" fontSize={view.scale > 700 ? 12 : 10.5}>
-                {label.name.toUpperCase()}
+              <text
+                key={label.id}
+                x={label.x}
+                y={label.y}
+                textAnchor="middle"
+                fill="rgba(255,255,255,0.82)"
+                fontSize={view.scale > 700 ? 10.5 : view.scale > 360 ? 8.5 : 6.5}
+              >
+                {label.name}
               </text>
             ))}
             {projectedCityLabels.map((label) => (
