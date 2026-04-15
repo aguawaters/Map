@@ -1,0 +1,1789 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { feature } from "topojson-client";
+import { geoDistance, geoGraticule10, geoOrthographic, geoPath } from "d3-geo";
+import countriesAtlas from "world-atlas/countries-110m.json";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Activity, Camera, Eye, Globe as GlobeIcon, Layers, LocateFixed, Pause, Plane, Play, RotateCcw, Satellite, Search, Ship } from "lucide-react";
+import { fetchOsintSnapshot, mergeOsintTracks, summarizeOsintSources } from "@/services/osint";
+
+const REGION_PRESETS = {
+  global: { key: "global", name: "Global", lat: 15, lng: 0, altitude: 2.15 },
+  atlantic: { key: "atlantic", name: "North Atlantic", lat: 35, lng: -35, altitude: 1.2 },
+  europe: { key: "europe", name: "Europe / East Med", lat: 38, lng: 20, altitude: 0.82 },
+  gulf: { key: "gulf", name: "Gulf / Hormuz", lat: 24, lng: 54, altitude: 0.34 },
+  hormuzClose: { key: "hormuzClose", name: "Hormuz close", lat: 25.6, lng: 56.2, altitude: 0.16 },
+  eastAsia: { key: "eastAsia", name: "East Asia", lat: 28, lng: 125, altitude: 0.62 },
+  northPacific: { key: "northPacific", name: "NW Pacific", lat: 34, lng: 142, altitude: 0.72 },
+  southAsia: { key: "southAsia", name: "South Asia", lat: 18, lng: 80, altitude: 0.58 },
+  russia: { key: "russia", name: "Russia", lat: 56, lng: 90, altitude: 0.96 },
+  usaEast: { key: "usaEast", name: "US East", lat: 34, lng: -78, altitude: 0.72 },
+};
+const REGION_KEYS = Object.keys(REGION_PRESETS);
+
+const AIRPORTS = {
+  JFK: { code: "JFK", city: "New York", country: "United States", lon: -73.7781, lat: 40.6413 },
+  LHR: { code: "LHR", city: "London", country: "United Kingdom", lon: -0.4543, lat: 51.47 },
+  FRA: { code: "FRA", city: "Frankfurt", country: "Germany", lon: 8.5706, lat: 50.0379 },
+  DOH: { code: "DOH", city: "Doha", country: "Qatar", lon: 51.6138, lat: 25.2731 },
+  DXB: { code: "DXB", city: "Dubai", country: "United Arab Emirates", lon: 55.3657, lat: 25.2532 },
+  DEL: { code: "DEL", city: "Delhi", country: "India", lon: 77.1031, lat: 28.5562 },
+  BOM: { code: "BOM", city: "Mumbai", country: "India", lon: 72.8679, lat: 19.0896 },
+  CCU: { code: "CCU", city: "Kolkata", country: "India", lon: 88.4467, lat: 22.6547 },
+  MAA: { code: "MAA", city: "Chennai", country: "India", lon: 80.1693, lat: 12.9941 },
+  PEK: { code: "PEK", city: "Beijing", country: "China", lon: 116.5975, lat: 40.0725 },
+  PVG: { code: "PVG", city: "Shanghai", country: "China", lon: 121.7998, lat: 31.1443 },
+  CAN: { code: "CAN", city: "Guangzhou", country: "China", lon: 113.2988, lat: 23.3924 },
+  SVO: { code: "SVO", city: "Moscow", country: "Russia", lon: 37.4146, lat: 55.9726 },
+  LED: { code: "LED", city: "St Petersburg", country: "Russia", lon: 30.2625, lat: 59.8003 },
+  VVO: { code: "VVO", city: "Vladivostok", country: "Russia", lon: 132.148, lat: 43.3989 },
+  KHV: { code: "KHV", city: "Khabarovsk", country: "Russia", lon: 135.188, lat: 48.528 },
+  FNJ: { code: "FNJ", city: "Pyongyang", country: "North Korea", lon: 125.67, lat: 39.2241 },
+  WSN: { code: "WSN", city: "Wonsan", country: "North Korea", lon: 127.486, lat: 39.1668 },
+  TPE: { code: "TPE", city: "Taipei", country: "Taiwan", lon: 121.2328, lat: 25.0797 },
+  ICN: { code: "ICN", city: "Seoul", country: "South Korea", lon: 126.4407, lat: 37.4602 },
+  HND: { code: "HND", city: "Tokyo", country: "Japan", lon: 139.7798, lat: 35.5494 },
+  SIN: { code: "SIN", city: "Singapore", country: "Singapore", lon: 103.994, lat: 1.3644 },
+  LAX: { code: "LAX", city: "Los Angeles", country: "United States", lon: -118.4085, lat: 33.9416 },
+  DOV: { code: "DOV", city: "Dover", country: "United States", lon: -75.466, lat: 39.1295 },
+  RMS: { code: "RMS", city: "Ramstein", country: "Germany", lon: 7.6003, lat: 49.4369 },
+  OKA: { code: "OKA", city: "Okinawa", country: "Japan", lon: 127.6459, lat: 26.1958 },
+  HIK: { code: "HIK", city: "Honolulu", country: "United States", lon: -157.9376, lat: 21.3187 },
+};
+
+const PORTS = {
+  NOR: { code: "NOR", city: "Norfolk", country: "United States", lon: -76.2859, lat: 36.8508 },
+  GIB: { code: "GIB", city: "Gibraltar", country: "United Kingdom", lon: -5.3536, lat: 36.1408 },
+  SUE: { code: "SUE", city: "Suez", country: "Egypt", lon: 32.5498, lat: 29.9668 },
+  DXB: { code: "DXB", city: "Dubai", country: "United Arab Emirates", lon: 55.2708, lat: 25.2048 },
+  MUM: { code: "MUM", city: "Mumbai", country: "India", lon: 72.8777, lat: 18.9388 },
+  CHN: { code: "CHN", city: "Chennai", country: "India", lon: 80.27, lat: 13.0827 },
+  VIZ: { code: "VIZ", city: "Visakhapatnam", country: "India", lon: 83.2185, lat: 17.6868 },
+  KOC: { code: "KOC", city: "Kochi", country: "India", lon: 76.2673, lat: 9.9312 },
+  AND: { code: "AND", city: "Andaman", country: "India", lon: 92.7265, lat: 11.6234 },
+  SGP: { code: "SGP", city: "Singapore", country: "Singapore", lon: 103.8198, lat: 1.2903 },
+  SHA: { code: "SHA", city: "Shanghai", country: "China", lon: 121.4737, lat: 31.2304 },
+  QIN: { code: "QIN", city: "Qingdao", country: "China", lon: 120.3826, lat: 36.0671 },
+  DAL: { code: "DAL", city: "Dalian", country: "China", lon: 121.6147, lat: 38.914 },
+  NBO: { code: "NBO", city: "Ningbo", country: "China", lon: 121.5498, lat: 29.8683 },
+  HKG: { code: "HKG", city: "Hong Kong", country: "China", lon: 114.1694, lat: 22.3193 },
+  TAI: { code: "TAI", city: "Kaohsiung", country: "Taiwan", lon: 120.3014, lat: 22.6273 },
+  BUS: { code: "BUS", city: "Busan", country: "South Korea", lon: 129.0756, lat: 35.1796 },
+  TYO: { code: "TYO", city: "Tokyo Bay", country: "Japan", lon: 139.8395, lat: 35.6427 },
+  VLA: { code: "VLA", city: "Vladivostok", country: "Russia", lon: 131.8855, lat: 43.1155 },
+  MUR: { code: "MUR", city: "Murmansk", country: "Russia", lon: 33.0856, lat: 68.9585 },
+  KGD: { code: "KGD", city: "Kaliningrad", country: "Russia", lon: 20.4522, lat: 54.7104 },
+  NOV: { code: "NOV", city: "Novorossiysk", country: "Russia", lon: 37.768, lat: 44.723 },
+  NAM: { code: "NAM", city: "Nampo", country: "North Korea", lon: 125.3571, lat: 38.737 },
+  CHO: { code: "CHO", city: "Chongjin", country: "North Korea", lon: 129.7956, lat: 41.768 },
+  RAS: { code: "RAS", city: "Rason", country: "North Korea", lon: 130.397, lat: 42.339 },
+  RTM: { code: "RTM", city: "Rotterdam", country: "Netherlands", lon: 4.47917, lat: 51.9244 },
+  HAM: { code: "HAM", city: "Hamburg", country: "Germany", lon: 9.9937, lat: 53.5511 },
+  ALG: { code: "ALG", city: "Algeciras", country: "Spain", lon: -5.4562, lat: 36.1408 },
+  LON: { code: "LON", city: "London Gateway", country: "United Kingdom", lon: 0.446, lat: 51.507 },
+  NYC: { code: "NYC", city: "New York", country: "United States", lon: -74.0059, lat: 40.7128 },
+  LAXP: { code: "LAXP", city: "Los Angeles", country: "United States", lon: -118.2641, lat: 33.7361 },
+  HOU: { code: "HOU", city: "Houston", country: "United States", lon: -95.3698, lat: 29.7604 },
+  SAV: { code: "SAV", city: "Savannah", country: "United States", lon: -81.0998, lat: 32.0809 },
+  COL: { code: "COL", city: "Colombo", country: "Sri Lanka", lon: 79.8612, lat: 6.9271 },
+  JKT: { code: "JKT", city: "Jakarta", country: "Indonesia", lon: 106.8456, lat: -6.2088 },
+  MNLP: { code: "MNLP", city: "Manila", country: "Philippines", lon: 120.9842, lat: 14.5995 },
+  MEL: { code: "MEL", city: "Melbourne", country: "Australia", lon: 144.9631, lat: -37.8136 },
+  SYD: { code: "SYD", city: "Sydney", country: "Australia", lon: 151.2093, lat: -33.8688 },
+  AKL: { code: "AKL", city: "Auckland", country: "New Zealand", lon: 174.7633, lat: -36.8485 },
+  CPT: { code: "CPT", city: "Cape Town", country: "South Africa", lon: 18.4241, lat: -33.9249 },
+  DUR: { code: "DUR", city: "Durban", country: "South Africa", lon: 31.0218, lat: -29.8587 },
+  LAG: { code: "LAG", city: "Lagos", country: "Nigeria", lon: 3.3915, lat: 6.4541 },
+  RIO: { code: "RIO", city: "Rio de Janeiro", country: "Brazil", lon: -43.1729, lat: -22.9068 },
+  SNT: { code: "SNT", city: "Santos", country: "Brazil", lon: -46.3289, lat: -23.9608 },
+  PAN: { code: "PAN", city: "Panama Canal", country: "Panama", lon: -79.65, lat: 9.08 },
+  LGB: { code: "LGB", city: "Long Beach", country: "United States", lon: -118.1937, lat: 33.7701 },
+};
+
+const COUNTRY_LABELS = [
+  { name: "United States", lon: -98, lat: 39 },
+  { name: "United Kingdom", lon: -2, lat: 54 },
+  { name: "Germany", lon: 10, lat: 51 },
+  { name: "Egypt", lon: 30, lat: 27 },
+  { name: "Saudi Arabia", lon: 45, lat: 24 },
+  { name: "Iran", lon: 53, lat: 32 },
+  { name: "Oman", lon: 57, lat: 22 },
+  { name: "United Arab Emirates", lon: 54, lat: 24 },
+  { name: "Russia", lon: 95, lat: 60 },
+  { name: "India", lon: 79, lat: 22 },
+  { name: "China", lon: 104, lat: 35 },
+  { name: "North Korea", lon: 127, lat: 40.1 },
+  { name: "South Korea", lon: 127.5, lat: 36.2 },
+  { name: "Japan", lon: 138, lat: 37 },
+  { name: "Taiwan", lon: 121, lat: 23.7 },
+  { name: "Singapore", lon: 103.8, lat: 1.3 },
+].map((item) => ({ ...item, type: "country" }));
+
+const CITY_LABELS = [
+  { name: "New York", lon: -74.0, lat: 40.71, tier: 1 },
+  { name: "London", lon: -0.12, lat: 51.5, tier: 1 },
+  { name: "Frankfurt", lon: 8.68, lat: 50.11, tier: 2 },
+  { name: "Moscow", lon: 37.62, lat: 55.75, tier: 1 },
+  { name: "Vladivostok", lon: 131.88, lat: 43.12, tier: 2 },
+  { name: "Beijing", lon: 116.4, lat: 39.9, tier: 1 },
+  { name: "Shanghai", lon: 121.47, lat: 31.23, tier: 1 },
+  { name: "Delhi", lon: 77.21, lat: 28.61, tier: 1 },
+  { name: "Mumbai", lon: 72.87, lat: 19.07, tier: 2 },
+  { name: "Chennai", lon: 80.27, lat: 13.08, tier: 2 },
+  { name: "Pyongyang", lon: 125.76, lat: 39.04, tier: 2 },
+  { name: "Taipei", lon: 121.56, lat: 25.03, tier: 2 },
+  { name: "Seoul", lon: 126.98, lat: 37.56, tier: 2 },
+  { name: "Tokyo", lon: 139.65, lat: 35.67, tier: 1 },
+  { name: "Singapore", lon: 103.82, lat: 1.35, tier: 2 },
+  { name: "Dubai", lon: 55.27, lat: 25.2, tier: 1 },
+  { name: "Bandar Abbas", lon: 56.27, lat: 27.18, tier: 2 },
+  { name: "Qeshm", lon: 55.89, lat: 26.81, tier: 2 },
+  { name: "Larak Island", lon: 56.36, lat: 26.86, tier: 2 },
+  { name: "Musandam", lon: 56.25, lat: 26.2, tier: 2 },
+  { name: "Rotterdam", lon: 4.48, lat: 51.92, tier: 2 },
+  { name: "Panama", lon: -79.53, lat: 8.98, tier: 2 },
+].map((item) => ({ ...item, type: "city" }));
+
+const GLOBAL_BRIEFINGS = [
+  { id: "iran-hormuz", title: "Iran war and Hormuz pressure", summary: "The Iran conflict is now a shipping and energy problem, not just a missile exchange.", significance: "Hormuz stress transmits into oil, fuel, inflation, insurance, and alliance strain.", tags: ["Iran", "Israel", "United States", "Saudi Arabia", "United Arab Emirates"] },
+  { id: "ukraine-endurance", title: "Russia-Ukraine endurance fight", summary: "The war in Ukraine remains an attritional contest while attention is pulled elsewhere.", significance: "If focus and resources drift to the Middle East, Russia gains more room to harden positions.", tags: ["Russia", "United States"] },
+  { id: "taiwan-watch", title: "Taiwan and East Asia watch", summary: "China keeps pressure on Taiwan while allies watch whether the United States can manage multiple theaters.", significance: "Any perceived distraction in Washington shifts deterrence math in the Pacific.", tags: ["China", "Taiwan", "Japan", "South Korea", "United States"] },
+  { id: "shipping-system", title: "Commercial shipping chokepoints", summary: "Container, tanker, LNG, and bulk flows are clustering around a few fragile routes.", significance: "A chokepoint problem becomes a prices, logistics, and alliance problem very quickly.", tags: ["Singapore", "India", "Saudi Arabia", "United Arab Emirates"] },
+];
+
+const COUNTRY_INTEL = {
+  "United States": {
+    stance: "Backing Israel, protecting Gulf shipping, and trying not to look strategically hollow in Europe or Asia.",
+    alliances: ["NATO", "Japan", "South Korea", "Israel", "Gulf partners"],
+    tensions: ["Iran", "Russia", "China", "North Korea"],
+    significance: "Still the system-shaping military power. The real problem is strategic bandwidth.",
+    latest: "Every carrier, air defense battery, and diplomatic fight in the Gulf affects what Washington can sustain elsewhere.",
+    whySignificant: "If the U.S. looks overcommitted, rivals test the edges in Europe and Asia.",
+    relations: [
+      { country: "Iran", type: "adversary", note: "Direct conflict over strikes, deterrence, and Gulf shipping." },
+      { country: "Israel", type: "partner", note: "Military and political backing, though escalation management matters." },
+      { country: "China", type: "strategic rival", note: "Pacific deterrence depends on whether U.S. focus holds." },
+      { country: "Russia", type: "strategic rival", note: "Ukraine remains a test of staying power." },
+    ],
+  },
+  Israel: {
+    stance: "Using force to degrade Iranian military capacity and push back Iran's regional network.",
+    alliances: ["United States"],
+    tensions: ["Iran", "Hezbollah", "Houthis"],
+    significance: "Israel can trigger regional chain reactions faster than almost any other actor in the dashboard.",
+    latest: "Its logic is transformational, not symbolic, with pressure extending beyond Iran into linked fronts like Lebanon.",
+    whySignificant: "Its actions can reset alliance politics, shipping risk, and escalation thresholds at once.",
+    relations: [
+      { country: "Iran", type: "active conflict", note: "Core military confrontation." },
+      { country: "United States", type: "backer", note: "Critical military and diplomatic support." },
+      { country: "Saudi Arabia", type: "quiet overlap", note: "Shared concern about Iran even without identical politics." },
+    ],
+  },
+  Iran: {
+    stance: "Unable to outmatch the coalition conventionally, so it raises cost through shipping, energy, proxies, and regional insecurity.",
+    alliances: ["Proxy network", "Partnered diplomacy with states that want de-escalation"],
+    tensions: ["Israel", "United States", "Some Gulf states"],
+    significance: "Iran's strongest lever is economic choke pressure, especially around Hormuz.",
+    latest: "Its strategic value lies in making continuation of war globally expensive even if battlefield losses mount.",
+    whySignificant: "Iran can spread pain through shipping and energy markets far beyond the immediate strike zone.",
+    relations: [
+      { country: "Israel", type: "active conflict", note: "Primary regional military enemy." },
+      { country: "United States", type: "direct pressure", note: "Conflict now includes direct American military weight." },
+      { country: "United Arab Emirates", type: "coercive pressure", note: "Gulf infrastructure and transit are part of Iran's leverage." },
+      { country: "Saudi Arabia", type: "regional rivalry", note: "Security rivalry mixed with a shared interest in avoiding total collapse." },
+    ],
+  },
+  China: {
+    stance: "Prefers Middle East stability for energy flow while benefiting whenever U.S. attention looks divided.",
+    alliances: ["Strategic overlap with Russia", "Economic leverage across Asia"],
+    tensions: ["Taiwan", "United States", "Japan"],
+    significance: "China sits at the intersection of Gulf energy dependence and long-run pressure on Taiwan.",
+    latest: "The key question is whether Beijing treats Middle East distraction as a caution signal or an opportunity signal.",
+    whySignificant: "China can stay restrained in one theater while profiting strategically from distraction in another.",
+    relations: [
+      { country: "Taiwan", type: "coercive rivalry", note: "Military pressure and annexation logic remain central." },
+      { country: "United States", type: "system rivalry", note: "Deterrence credibility is measured across theaters." },
+      { country: "Russia", type: "strategic overlap", note: "Shared interest in weakening Western cohesion." },
+      { country: "North Korea", type: "buffer logic", note: "Beijing dislikes chaos but values insulation." },
+    ],
+  },
+  Russia: {
+    stance: "Still centered on attritional war in Ukraine while benefiting from higher energy prices and Western distraction.",
+    alliances: ["Belarus", "Security links with North Korea", "Coordination with China"],
+    tensions: ["Ukraine", "NATO"],
+    significance: "Russia gains whenever rival crises dilute the West's ability to concentrate force and money.",
+    latest: "The strategic style is endurance: absorb, wait, pressure, exploit distraction.",
+    whySignificant: "Even without dramatic breakthroughs, Russia can improve its position if others lose focus.",
+    relations: [
+      { country: "North Korea", type: "transactional support", note: "Mutual utility deepens spoiler capacity." },
+      { country: "China", type: "strategic overlap", note: "Not identical goals, but strong anti-Western convergence." },
+    ],
+  },
+  India: {
+    stance: "Strategic hedger with growing weight in the Indian Ocean, trying to stay useful without becoming subordinate to any bloc.",
+    alliances: ["Quad overlap", "Regional maritime partnerships"],
+    tensions: ["China"],
+    significance: "India matters because the Indian Ocean links Gulf energy to Asia and because India can stabilize or complicate that space.",
+    latest: "Its value rises when shipping, sea lanes, and Indo-Pacific balancing become one connected problem.",
+    whySignificant: "India can convert geography into leverage without matching U.S. or Chinese global reach.",
+    relations: [
+      { country: "China", type: "rival", note: "Competition spans border, maritime, and influence domains." },
+      { country: "United States", type: "pragmatic partner", note: "Shared concern about China without full dependence." },
+      { country: "Iran", type: "practical concern", note: "Energy and shipping disruption hit India hard." },
+    ],
+  },
+  "North Korea": {
+    stance: "Spoiler state that gains from fragmentation among larger powers and from its ties to Russia.",
+    alliances: ["Russia", "Limited dependence on China"],
+    tensions: ["South Korea", "United States", "Japan"],
+    significance: "North Korea matters less because of size and more because it can inject sudden military risk into a crowded agenda.",
+    latest: "Its military signaling gets more dangerous when Washington is tied down elsewhere.",
+    whySignificant: "Pyongyang thrives when deterrence attention is split.",
+    relations: [
+      { country: "South Korea", type: "active deterrence rivalry", note: "Permanent flashpoint." },
+      { country: "Russia", type: "strategic exchange", note: "Mutual utility deepens resilience." },
+      { country: "China", type: "buffer dependence", note: "Beijing dislikes instability but still matters to DPRK survival." },
+    ],
+  },
+  Taiwan: {
+    stance: "Trying to strengthen deterrence while avoiding political and military overextension.",
+    alliances: ["United States", "Support from Japan and some Western partners"],
+    tensions: ["China"],
+    significance: "Taiwan is the clearest test case for whether allies believe U.S. commitments still scale across theaters.",
+    latest: "The challenge is not just procurement, it is whether domestic politics can move fast enough under pressure.",
+    whySignificant: "A Taiwan crisis would redraw global technology, shipping, and alliance systems.",
+    relations: [
+      { country: "China", type: "core coercive rivalry", note: "Main strategic fault line." },
+      { country: "United States", type: "security dependence", note: "Deterrence credibility runs heavily through Washington." },
+      { country: "Japan", type: "strategic overlap", note: "Any Taiwan contingency rapidly affects Japan." },
+    ],
+  },
+  Japan: {
+    stance: "Balancing stronger alliance commitments with economic vulnerability to shipping and energy disruption.",
+    alliances: ["United States"],
+    tensions: ["China", "North Korea"],
+    significance: "Japan is a front-rank ally in Asia and a major economy that feels Gulf shocks quickly.",
+    latest: "Middle East instability and East Asia deterrence are now linked through energy and alliance credibility.",
+    whySignificant: "Japan turns distant conflicts into immediate strategic and economic calculations.",
+    relations: [
+      { country: "United States", type: "treaty ally", note: "Core deterrence backbone." },
+      { country: "China", type: "strategic rival", note: "Maritime and Taiwan-linked risk." },
+      { country: "South Korea", type: "operational necessity", note: "Shared deterrence needs despite political friction." },
+    ],
+  },
+  "South Korea": {
+    stance: "Focused on North Korea deterrence while trying to avoid broader regional overcommitment.",
+    alliances: ["United States"],
+    tensions: ["North Korea"],
+    significance: "South Korea sits on a permanent military fault line and still depends on regional stability for exports and growth.",
+    latest: "The more global crises stack, the more Seoul worries about being pulled into other theaters while its main threat remains unchanged.",
+    whySignificant: "It is a frontline ally whose calculations change rapidly when U.S. resources look stretched.",
+    relations: [
+      { country: "North Korea", type: "active deterrence rivalry", note: "Immediate military danger." },
+      { country: "United States", type: "security anchor", note: "Alliance remains the core deterrent." },
+      { country: "Japan", type: "operational necessity", note: "Trilateral cooperation matters more than political comfort." },
+    ],
+  },
+  "Saudi Arabia": {
+    stance: "Wants containment, infrastructure defense, and restored shipping, not a romantic regional showdown.",
+    alliances: ["United States", "Gulf partners"],
+    tensions: ["Iran"],
+    significance: "Saudi weight comes from energy, geography, and the fact that attacks on Gulf infrastructure change the world economy fast.",
+    latest: "Riyadh's instinct is defensive hardening and pressure to reopen shipping, not endless escalation.",
+    whySignificant: "It is a regional heavyweight whose caution or anger can shift the Gulf balance quickly.",
+    relations: [
+      { country: "Iran", type: "regional rivalry", note: "Security competition with huge economic consequences." },
+      { country: "United States", type: "security partnership", note: "Still central even if trust is not frictionless." },
+      { country: "United Arab Emirates", type: "aligned concern", note: "Shared exposure to Gulf insecurity." },
+    ],
+  },
+  "United Arab Emirates": {
+    stance: "Highly pragmatic until trade arteries close, then pragmatism can become hard-edged fast.",
+    alliances: ["United States", "Gulf partners"],
+    tensions: ["Iran"],
+    significance: "The UAE matters because finance, trade, ports, and transit all concentrate there.",
+    latest: "The longer shipping stays disrupted, the more Abu Dhabi's incentives move from caution to coercive reopening.",
+    whySignificant: "It turns Gulf instability into a global logistics problem almost immediately.",
+    relations: [
+      { country: "Iran", type: "security pressure", note: "Trade exposure and physical vulnerability meet." },
+      { country: "Saudi Arabia", type: "regional alignment", note: "Shared concern about Gulf order." },
+      { country: "United States", type: "security reliance", note: "External guarantees still matter." },
+    ],
+  },
+  Singapore: {
+    stance: "Not a belligerent, but a critical logistics and refining node watching energy and shipping shock move through Asia.",
+    alliances: ["Pragmatic security links", "Trade centrality"],
+    tensions: [],
+    significance: "Singapore is a small state with outsized relevance because disruption reroutes through its systems.",
+    latest: "As Gulf energy stress rises, Singapore becomes a more important indicator of how badly Asia is being squeezed.",
+    whySignificant: "It shows how a distant war becomes a shipping and price problem for the whole region.",
+    relations: [
+      { country: "India", type: "maritime linkage", note: "Indian Ocean to Southeast Asia flow." },
+      { country: "China", type: "economic exposure", note: "Trade and shipping interdependence." },
+      { country: "Japan", type: "energy route overlap", note: "Both are exposed to disrupted maritime flow." },
+    ],
+  },
+};
+
+const NO_FLY = [
+  { name: "Ukraine conflict airspace", west: 18, south: 43, east: 41, north: 53, kind: "high", centerLat: 48, centerLon: 30 },
+  { name: "North Korea restricted", west: 124, south: 37, east: 131, north: 43, kind: "high", centerLat: 40, centerLon: 127.5 },
+  { name: "Hormuz caution", west: 52, south: 23, east: 58, north: 28, kind: "medium", centerLat: 25.3, centerLon: 55.1 },
+];
+
+const CHOKEPOINTS = [
+  { name: "Hormuz", centerLon: 55.1, centerLat: 25.3, note: "Oil and LNG hinge point", severity: "high" },
+  { name: "Suez", centerLon: 32.5, centerLat: 30.0, note: "Europe-Asia container shortcut", severity: "high" },
+  { name: "Bab el-Mandeb", centerLon: 43.4, centerLat: 12.4, note: "Red Sea gate", severity: "high" },
+  { name: "Malacca", centerLon: 101.7, centerLat: 3.4, note: "Asia's shipping throat", severity: "high" },
+  { name: "Panama", centerLon: -79.7, centerLat: 9.1, note: "Atlantic-Pacific transfer", severity: "medium" },
+].map((item) => ({ ...item, type: "chokepoint" }));
+
+const CLAIMED_MINE_AREAS = [
+  {
+    id: "iran-claimed-hormuz-main-channel",
+    name: "Iran-claimed mine danger area",
+    claim: "Unverified Iranian/IRGC-linked public claim; not treated as confirmed mine placement.",
+    coordinates: [
+      [55.45, 25.25],
+      [56.15, 25.18],
+      [56.75, 25.55],
+      [56.95, 26.05],
+      [56.35, 26.28],
+      [55.55, 26.05],
+      [55.45, 25.25],
+    ],
+    centerLon: 56.2,
+    centerLat: 25.75,
+  },
+  {
+    id: "iran-claimed-north-safe-route",
+    name: "Claimed northern safe lane",
+    claim: "Reported claim that traffic could route closer to Iranian-controlled waters; shown for awareness only.",
+    coordinates: [
+      [55.7, 26.45],
+      [56.15, 26.55],
+      [56.75, 26.5],
+      [56.75, 26.68],
+      [56.1, 26.74],
+      [55.65, 26.62],
+      [55.7, 26.45],
+    ],
+    centerLon: 56.25,
+    centerLat: 26.62,
+    kind: "claimed-safe",
+  },
+];
+const CHOKEPOINT_RADIUS_DEGREES = {
+  Hormuz: 4.2,
+  Suez: 4.8,
+  "Bab el-Mandeb": 4.0,
+  Malacca: 5.4,
+  Panama: 4.6,
+};
+
+const AIR_ROUTES = [
+  { operator: "British Airways", from: "LHR", to: "JFK", category: "commercial", count: 2 },
+  { operator: "Lufthansa", from: "FRA", to: "JFK", category: "commercial", count: 1 },
+  { operator: "Qatar Airways", from: "DOH", to: "FRA", category: "commercial", count: 2 },
+  { operator: "Emirates", from: "DXB", to: "LHR", category: "commercial", count: 2 },
+  { operator: "Air India", from: "DEL", to: "LHR", category: "commercial", count: 2 },
+  { operator: "IndiGo", from: "DEL", to: "BOM", category: "commercial", count: 2 },
+  { operator: "Air China", from: "PEK", to: "SVO", category: "commercial", count: 2 },
+  { operator: "China Eastern", from: "PVG", to: "SIN", category: "commercial", count: 2 },
+  { operator: "China Southern", from: "CAN", to: "DXB", category: "commercial", count: 1 },
+  { operator: "Aeroflot", from: "SVO", to: "LED", category: "commercial", count: 1 },
+  { operator: "Rossiya", from: "LED", to: "VVO", category: "commercial", count: 1 },
+  { operator: "Air Koryo", from: "FNJ", to: "PEK", category: "commercial", count: 1 },
+  { operator: "ANA", from: "HND", to: "LAX", category: "commercial", count: 1 },
+  { operator: "Korean Air", from: "ICN", to: "LAX", category: "commercial", count: 1 },
+  { operator: "Singapore Airlines", from: "SIN", to: "HND", category: "commercial", count: 1 },
+  { operator: "PLAAF", from: "PEK", to: "PVG", category: "military", count: 1 },
+  { operator: "PLAAF", from: "PEK", to: "TPE", category: "military", count: 1 },
+  { operator: "Russian Air Force", from: "SVO", to: "VVO", category: "military", count: 1 },
+  { operator: "Russian Air Force", from: "LED", to: "KHV", category: "military", count: 1 },
+  { operator: "Indian Air Force", from: "DEL", to: "CCU", category: "military", count: 1 },
+  { operator: "Indian Air Force", from: "DEL", to: "MAA", category: "military", count: 1 },
+  { operator: "KPAF", from: "FNJ", to: "WSN", category: "military", count: 1 },
+  { operator: "USAF", from: "DOV", to: "RMS", category: "military", count: 1 },
+  { operator: "USAF", from: "HIK", to: "OKA", category: "military", count: 1 },
+];
+
+const SEA_LANES = [
+  { operator: "US Navy", from: "NOR", to: "GIB", category: "military", vesselClass: "naval", count: 1 },
+  { operator: "US Navy", from: "GIB", to: "SUE", category: "military", vesselClass: "naval", count: 1 },
+  { operator: "Royal Navy", from: "GIB", to: "SUE", category: "military", vesselClass: "naval", count: 1 },
+  { operator: "PLAN", from: "QIN", to: "TAI", category: "military", vesselClass: "naval", count: 1 },
+  { operator: "PLAN", from: "DAL", to: "HKG", category: "military", vesselClass: "naval", count: 1 },
+  { operator: "Russian Navy", from: "VLA", to: "CHO", category: "military", vesselClass: "naval", count: 1 },
+  { operator: "Indian Navy", from: "CHN", to: "VIZ", category: "military", vesselClass: "naval", count: 1 },
+  { operator: "KPN", from: "RAS", to: "VLA", category: "military", vesselClass: "naval", count: 1 },
+  { operator: "Maersk", from: "RTM", to: "NYC", category: "commercial", vesselClass: "container", count: 4 },
+  { operator: "MSC", from: "RTM", to: "SAV", category: "commercial", vesselClass: "container", count: 3 },
+  { operator: "CMA CGM", from: "ALG", to: "NYC", category: "commercial", vesselClass: "container", count: 2 },
+  { operator: "Hapag-Lloyd", from: "HAM", to: "NYC", category: "commercial", vesselClass: "container", count: 2 },
+  { operator: "ONE", from: "LON", to: "NYC", category: "commercial", vesselClass: "container", count: 2 },
+  { operator: "COSCO", from: "SHA", to: "LGB", category: "commercial", vesselClass: "container", count: 5 },
+  { operator: "COSCO", from: "NBO", to: "LAXP", category: "commercial", vesselClass: "container", count: 4 },
+  { operator: "Evergreen", from: "TAI", to: "LGB", category: "commercial", vesselClass: "container", count: 3 },
+  { operator: "ONE", from: "TYO", to: "LAXP", category: "commercial", vesselClass: "container", count: 3 },
+  { operator: "MSC", from: "BUS", to: "LGB", category: "commercial", vesselClass: "container", count: 2 },
+  { operator: "Maersk", from: "DXB", to: "MUM", category: "commercial", vesselClass: "tanker", count: 4 },
+  { operator: "Frontline Tanker", from: "DXB", to: "MUM", category: "commercial", vesselClass: "tanker", count: 8 },
+  { operator: "Gulf LNG Shuttle", from: "DXB", to: "SGP", category: "commercial", vesselClass: "lng", count: 6 },
+  { operator: "Regional Feeder", from: "DXB", to: "KOC", category: "commercial", vesselClass: "container", count: 5 },
+  { operator: "Bulk Gulf Transit", from: "DXB", to: "COL", category: "commercial", vesselClass: "bulk", count: 4 },
+  { operator: "MSC", from: "COL", to: "DXB", category: "commercial", vesselClass: "tanker", count: 3 },
+  { operator: "CMA CGM", from: "SUE", to: "DXB", category: "commercial", vesselClass: "tanker", count: 3 },
+  { operator: "QatarGas Charter", from: "DXB", to: "SGP", category: "commercial", vesselClass: "lng", count: 3 },
+  { operator: "LNG Charter", from: "DXB", to: "JKT", category: "commercial", vesselClass: "lng", count: 2 },
+  { operator: "COSCO", from: "SHA", to: "SGP", category: "commercial", vesselClass: "container", count: 5 },
+  { operator: "China Shipping", from: "NBO", to: "SGP", category: "commercial", vesselClass: "container", count: 3 },
+  { operator: "Evergreen", from: "TAI", to: "SGP", category: "commercial", vesselClass: "container", count: 2 },
+  { operator: "ONE", from: "TYO", to: "SGP", category: "commercial", vesselClass: "container", count: 3 },
+  { operator: "MSC", from: "BUS", to: "SGP", category: "commercial", vesselClass: "container", count: 2 },
+  { operator: "MSC", from: "ALG", to: "SUE", category: "commercial", vesselClass: "container", count: 4 },
+  { operator: "CMA CGM", from: "RTM", to: "SUE", category: "commercial", vesselClass: "container", count: 2 },
+  { operator: "Hapag-Lloyd", from: "HAM", to: "SUE", category: "commercial", vesselClass: "container", count: 2 },
+  { operator: "Maersk", from: "RTM", to: "DXB", category: "commercial", vesselClass: "tanker", count: 2 },
+  { operator: "MSC", from: "SUE", to: "SGP", category: "commercial", vesselClass: "container", count: 4 },
+  { operator: "CMA CGM", from: "SUE", to: "COL", category: "commercial", vesselClass: "container", count: 2 },
+  { operator: "Maersk", from: "SGP", to: "MEL", category: "commercial", vesselClass: "container", count: 2 },
+  { operator: "MSC", from: "SGP", to: "SYD", category: "commercial", vesselClass: "container", count: 2 },
+  { operator: "ONE", from: "SGP", to: "AKL", category: "commercial", vesselClass: "container", count: 1 },
+  { operator: "CMA CGM", from: "MEL", to: "AKL", category: "commercial", vesselClass: "container", count: 1 },
+  { operator: "Maersk", from: "CPT", to: "DUR", category: "commercial", vesselClass: "bulk", count: 2 },
+  { operator: "MSC", from: "DUR", to: "LAG", category: "commercial", vesselClass: "bulk", count: 2 },
+  { operator: "CMA CGM", from: "CPT", to: "LAG", category: "commercial", vesselClass: "bulk", count: 1 },
+  { operator: "Maersk", from: "RIO", to: "SNT", category: "commercial", vesselClass: "ro-ro", count: 2 },
+  { operator: "MSC", from: "SNT", to: "NYC", category: "commercial", vesselClass: "ro-ro", count: 2 },
+  { operator: "CMA CGM", from: "RIO", to: "PAN", category: "commercial", vesselClass: "container", count: 1 },
+  { operator: "Hapag-Lloyd", from: "SNT", to: "RTM", category: "commercial", vesselClass: "container", count: 1 },
+  { operator: "Canal Transit", from: "PAN", to: "LAXP", category: "commercial", vesselClass: "container", count: 3 },
+  { operator: "Canal Transit", from: "PAN", to: "NYC", category: "commercial", vesselClass: "container", count: 2 },
+];
+
+const SATELLITE_GROUPS = [
+  { operator: "ISS partnership", name: "ISS", category: "civil", count: 1, inclination: 51.6, altitude: 408, drift: 2.8 },
+  { operator: "SpaceX", name: "STARLINK", category: "commercial", count: 18, inclination: 53, altitude: 550, drift: 3.2 },
+  { operator: "OneWeb", name: "ONEWEB", category: "commercial", count: 10, inclination: 87, altitude: 1200, drift: 2.2 },
+  { operator: "US Government", name: "USA", category: "military", count: 6, inclination: 63.4, altitude: 520, drift: 2.5 },
+  { operator: "Commercial EO", name: "PLANET", category: "commercial", count: 6, inclination: 97.4, altitude: 500, drift: 2.9 },
+];
+
+const VESSEL_CLASS_OPTIONS = ["all", "container", "tanker", "bulk", "lng", "ro-ro"];
+const LIVE_EVENTS = [
+  { t: 18, title: "Satellite pass", detail: "Orbital coverage lines up with corridor activity.", severity: "low", region: "East Med" },
+  { t: 33, title: "Airspace alert", detail: "Routing bends around an active restriction area.", severity: "high", region: "Eastern Europe" },
+  { t: 56, title: "Vessel reroute", detail: "Maritime posture shifts near a chokepoint.", severity: "medium", region: "Hormuz" },
+  { t: 82, title: "Traffic spike", detail: "Ground and corridor pressure rises in urban hubs.", severity: "low", region: "Global" },
+];
+const CAMERAS = [
+  { name: "NYC DOT Midtown", city: "New York", note: "Public traffic camera placeholder" },
+  { name: "TfL Central London", city: "London", note: "Official transport camera directory placeholder" },
+  { name: "Tokyo Metro Traffic", city: "Tokyo", note: "Public traffic camera placeholder" },
+];
+
+function hasLonLat(value) {
+  return !!value && Number.isFinite(value.lon) && Number.isFinite(value.lat);
+}
+
+function normalizeLon(lon) {
+  let out = lon;
+  while (out > 180) out -= 360;
+  while (out < -180) out += 360;
+  return out;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function seededUnit(key) {
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) % 10000) / 10000;
+}
+
+function buildArcPoints(from, to, steps = 44) {
+  const points = [];
+  const wrap = (lon) => {
+    let out = lon;
+    while (out > 180) out -= 360;
+    while (out < -180) out += 360;
+    return out;
+  };
+  const distanceLon = to.lng - from.lng;
+  const adjustedLon = Math.abs(distanceLon) > 180 ? to.lng - Math.sign(distanceLon) * 360 : to.lng;
+  for (let i = 0; i <= steps; i += 1) {
+    const t = i / steps;
+    points.push({
+      lat: from.lat + (to.lat - from.lat) * t,
+      lng: wrap(from.lng + (adjustedLon - from.lng) * t),
+    });
+  }
+  return points;
+}
+
+function routeChokepointsForPoints(points) {
+  if (!Array.isArray(points) || points.length === 0) return [];
+  return CHOKEPOINTS.filter((chokepoint) => {
+    const radius = CHOKEPOINT_RADIUS_DEGREES[chokepoint.name] || 4;
+    return points.some((point) => {
+      if (!point || !Number.isFinite(point.lng) || !Number.isFinite(point.lat)) return false;
+      return Math.abs(normalizeLon(point.lng - chokepoint.centerLon)) <= radius && Math.abs(point.lat - chokepoint.centerLat) <= radius;
+    });
+  }).map((item) => item.name);
+}
+
+function chokepointsForCodes(fromCode, toCode, points = []) {
+  const codes = [fromCode, toCode].filter(Boolean);
+  const hits = routeChokepointsForPoints(points);
+  if (codes.some((code) => ["DXB", "MUM", "DOH"].includes(code))) hits.push("Hormuz");
+  if (codes.some((code) => ["SUE", "ALG", "RTM", "HAM", "LON"].includes(code))) hits.push("Suez");
+  if (codes.some((code) => ["SGP", "JKT", "COL", "MNLP", "BUS", "TYO", "SHA", "NBO", "TAI"].includes(code))) hits.push("Malacca");
+  if (codes.some((code) => ["PAN", "NYC", "LAXP", "LGB", "SAV"].includes(code))) hits.push("Panama");
+  return [...new Set(hits)];
+}
+
+function createRouteTrack(kind, route, index) {
+  const origin = kind === "aircraft" ? AIRPORTS[route.from] ?? null : PORTS[route.from] ?? null;
+  const dest = kind === "aircraft" ? AIRPORTS[route.to] ?? null : PORTS[route.to] ?? null;
+  if (!origin || !dest || !hasLonLat(origin) || !hasLonLat(dest)) return null;
+
+  const seed = seededUnit(`${kind}-${route.operator}-${route.from}-${route.to}-${index}`);
+  const phase = seededUnit(`phase-${kind}-${route.from}-${route.to}-${index}`);
+  const points = buildArcPoints({ lat: origin.lat, lng: origin.lon }, { lat: dest.lat, lng: dest.lon });
+  const pointIndex = Math.floor(phase * (points.length - 1));
+  const current = points[pointIndex] || points[0];
+  const ahead = points[Math.min(points.length - 1, pointIndex + 1)] || current;
+  if (!current || !ahead) return null;
+
+  const heading = ((Math.atan2(ahead.lng - current.lng, ahead.lat - current.lat) * 180) / Math.PI + 360) % 360;
+  const prefix = route.operator.replace(/[^A-Z]/gi, "").slice(0, kind === "aircraft" ? 3 : 4).toUpperCase() || (kind === "aircraft" ? "AIR" : "SEA");
+
+  return {
+    id: `${prefix}${100 + index}`,
+    type: kind,
+    category: route.category,
+    operator: route.operator,
+    military: route.category === "military",
+    origin: route.from,
+    dest: route.to,
+    fromLon: origin.lon,
+    fromLat: origin.lat,
+    toLon: dest.lon,
+    toLat: dest.lat,
+    progress: phase,
+    delta: (kind === "aircraft" ? 0.004 : 0.001) + seed * (kind === "aircraft" ? 0.004 : 0.0013),
+    lon: current.lng,
+    lat: current.lat,
+    heading,
+    speed: kind === "aircraft" ? Math.round(410 + seed * 120) : Math.round(12 + seed * 16),
+    altitude: kind === "aircraft" ? Math.round(28000 + seed * 12000) : 0,
+    vesselClass: kind === "vessel" ? route.vesselClass || null : null,
+    chokepoints: kind === "vessel" ? chokepointsForCodes(route.from, route.to, points) : routeChokepointsForPoints(points),
+  };
+}
+
+function createSatelliteTrack(group, index) {
+  const seed = seededUnit(`${group.name}-${index}`);
+  const phase = seed * Math.PI * 2;
+  return {
+    id: `${group.name}-${String(index + 1).padStart(2, "0")}`,
+    type: "satellite",
+    category: group.category,
+    operator: group.operator,
+    military: group.category === "military",
+    lonBase: -180 + seed * 360,
+    phase,
+    inclination: group.inclination,
+    drift: group.drift * (seed > 0.5 ? 1 : -1),
+    delta: 0.02 + seed * 0.018,
+    lon: normalizeLon(-180 + seed * 360),
+    lat: Math.sin(phase) * Math.min(group.inclination, 80),
+    heading: seed * 360,
+    altitude: group.altitude,
+    speed: 26500 + Math.round(seed * 1800),
+    vesselClass: null,
+    chokepoints: [],
+  };
+}
+
+function buildInitialTracks() {
+  const aircraft = AIR_ROUTES.flatMap((route, routeIndex) => Array.from({ length: route.count }, (_, i) => createRouteTrack("aircraft", route, routeIndex * 10 + i)).filter(Boolean));
+  const vessels = SEA_LANES.flatMap((route, routeIndex) => Array.from({ length: route.count }, (_, i) => createRouteTrack("vessel", route, routeIndex * 10 + i)).filter(Boolean));
+  const satellites = SATELLITE_GROUPS.flatMap((group) => Array.from({ length: group.count }, (_, i) => createSatelliteTrack(group, i)).filter(Boolean));
+  return [...aircraft, ...vessels, ...satellites].filter((track) => track && hasLonLat(track));
+}
+
+const TRACKS_SEED = buildInitialTracks();
+
+function validateSeed(tracks) {
+  const errors = [];
+  const seen = new Set();
+
+  tracks.forEach((track) => {
+    if (!track?.id) errors.push("Track is missing an id.");
+    if (track?.id && seen.has(track.id)) errors.push(`Duplicate track id: ${track.id}`);
+    if (track?.id) seen.add(track.id);
+    if (!hasLonLat(track)) errors.push(`Track ${track?.id || "unknown"} is missing valid coordinates.`);
+    if (!["aircraft", "vessel", "satellite"].includes(track?.type)) errors.push(`Track ${track?.id || "unknown"} has an unknown type.`);
+  });
+
+  return errors;
+}
+
+function validateRegions(regions) {
+  return Object.values(regions).flatMap((region) => {
+    const errors = [];
+    if (!region.key || !region.name) errors.push("A region preset is missing key or name.");
+    if (!Number.isFinite(region.lat) || !Number.isFinite(region.lng)) errors.push(`Region ${region.name || region.key || "unknown"} has invalid coordinates.`);
+    if (!Number.isFinite(region.altitude) || region.altitude <= 0) errors.push(`Region ${region.name || region.key || "unknown"} has an invalid altitude.`);
+    return errors;
+  });
+}
+
+function validateReferences() {
+  const errors = [];
+
+  AIR_ROUTES.forEach((route) => {
+    if (!AIRPORTS[route.from]) errors.push(`Air route ${route.operator} references missing origin ${route.from}.`);
+    if (!AIRPORTS[route.to]) errors.push(`Air route ${route.operator} references missing destination ${route.to}.`);
+  });
+
+  SEA_LANES.forEach((route) => {
+    if (!PORTS[route.from]) errors.push(`Sea lane ${route.operator} references missing origin ${route.from}.`);
+    if (!PORTS[route.to]) errors.push(`Sea lane ${route.operator} references missing destination ${route.to}.`);
+  });
+
+  return errors;
+}
+
+
+
+function formatClock(date) {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function buildLiveEntries(tracks, frame, selectedId) {
+  const now = new Date();
+  const entries = [];
+  const safe = tracks.filter(hasLonLat);
+  const selected = safe.find((track) => track.id === selectedId) || safe[0] || null;
+  const eastAsiaTraffic = safe.filter((track) => track.lon > 115 && track.lon < 145 && track.lat > 20 && track.lat < 45);
+  const gulfTraffic = safe.filter((track) => track.lon > 46 && track.lon < 60 && track.lat > 20 && track.lat < 30);
+  const militaryVisible = safe.filter((track) => track.military).length;
+
+  if (selected) {
+    entries.push({
+      id: `track-${Date.now()}-${frame}`,
+      ts: now,
+      level: selected.military ? "warning" : "info",
+      title: `${selected.id} updated`,
+      detail: `${selected.operator} ${selected.type} at ${selected.speed ? Math.round(selected.speed) : "--"}${selected.type === "aircraft" ? " kt" : selected.type === "vessel" ? " kn" : " km/h orbital"}.`,
+    });
+  }
+  if (frame % 2 === 0) {
+    entries.push({ id: `global-${Date.now()}-${frame}`, ts: now, level: "info", title: "Global traffic sweep", detail: `${safe.filter((track) => track.type === "aircraft").length} air tracks and ${safe.filter((track) => track.type === "vessel").length} maritime tracks active.` });
+  }
+  if (frame % 3 === 0) {
+    entries.push({ id: `gulf-${Date.now()}-${frame}`, ts: now, level: gulfTraffic.length > 4 ? "warning" : "info", title: "Gulf watch", detail: `${gulfTraffic.length} tracked assets inside Gulf / Hormuz corridor.` });
+  }
+  if (frame % 4 === 0) {
+    entries.push({ id: `eastasia-${Date.now()}-${frame}`, ts: now, level: eastAsiaTraffic.length > 10 ? "warning" : "info", title: "East Asia sweep", detail: `${eastAsiaTraffic.length} tracked assets across East Asia and NW Pacific corridors.` });
+  }
+  if (frame % 5 === 0) {
+    entries.push({ id: `mil-${Date.now()}-${frame}`, ts: now, level: militaryVisible > 10 ? "warning" : "info", title: "Military picture", detail: `${militaryVisible} military-tagged tracks currently active.` });
+  }
+  return entries.slice(0, 5);
+}
+
+function stepTrack(track, frame) {
+  if (!track || !hasLonLat(track)) return null;
+  if (track.osint) return track;
+  if (track.type === "satellite") {
+    const nextPhase = track.phase + track.delta;
+    return {
+      ...track,
+      phase: nextPhase,
+      lat: Math.sin(nextPhase) * Math.min(track.inclination, 80),
+      lon: normalizeLon(track.lonBase + nextPhase * track.drift * 22),
+      heading: normalizeLon((track.heading || 0) + track.drift * 3),
+    };
+  }
+
+  if (!Number.isFinite(track.progress)) return track;
+  const nextProgress = (track.progress + track.delta) % 1;
+  const points = buildArcPoints({ lat: track.fromLat, lng: track.fromLon }, { lat: track.toLat, lng: track.toLon });
+  const pointIndex = Math.floor(nextProgress * (points.length - 1));
+  const current = points[pointIndex] || points[0];
+  const ahead = points[Math.min(points.length - 1, pointIndex + 1)] || current;
+  if (!current || !ahead) return track;
+
+  const heading = ((Math.atan2(ahead.lng - current.lng, ahead.lat - current.lat) * 180) / Math.PI + 360) % 360;
+  return {
+    ...track,
+    progress: nextProgress,
+    lon: current.lng,
+    lat: current.lat,
+    heading,
+    altitude: track.type === "aircraft" ? clamp((track.altitude || 34000) + Math.sin(frame * 0.15 + nextProgress * 6) * 40, 25000, 43000) : 0,
+    speed: track.type === "aircraft" ? clamp((track.speed || 450) + Math.sin(frame * 0.08 + nextProgress * 8), 360, 620) : clamp((track.speed || 18) + Math.sin(frame * 0.03 + nextProgress * 10) * 0.2, 8, 34),
+  };
+}
+
+function pointColor(track) {
+  if (track.type === "aircraft") return track.category === "military" ? "#fb923c" : "#67e8f9";
+  if (track.type === "satellite") return track.category === "military" ? "#fb7185" : "#c4b5fd";
+  return track.category === "military" ? "#fda4af" : track.vesselClass === "tanker" ? "#fb923c" : track.vesselClass === "lng" ? "#d946ef" : track.vesselClass === "bulk" ? "#f59e0b" : track.vesselClass === "ro-ro" ? "#10b981" : "#86efac";
+}
+
+function badgeTone(type, category) {
+  if (type === "aircraft") return category === "military" ? "bg-orange-500/15 text-orange-200 border-orange-400/20" : "bg-cyan-500/15 text-cyan-200 border-cyan-400/20";
+  if (type === "satellite") return category === "military" ? "bg-rose-500/15 text-rose-200 border-rose-400/20" : "bg-violet-500/15 text-violet-200 border-violet-400/20";
+  return category === "military" ? "bg-pink-500/15 text-pink-200 border-pink-400/20" : "bg-emerald-500/15 text-emerald-200 border-emerald-400/20";
+}
+
+function vesselClassTone(vesselClass) {
+  const tones = {
+    container: "border-cyan-400/20 bg-cyan-500/10 text-cyan-200",
+    tanker: "border-orange-400/20 bg-orange-500/10 text-orange-200",
+    bulk: "border-amber-400/20 bg-amber-500/10 text-amber-200",
+    lng: "border-fuchsia-400/20 bg-fuchsia-500/10 text-fuchsia-200",
+    "ro-ro": "border-emerald-400/20 bg-emerald-500/10 text-emerald-200",
+    naval: "border-rose-400/20 bg-rose-500/10 text-rose-200",
+  };
+  return tones[vesselClass] || "border-zinc-700 bg-zinc-900 text-zinc-100";
+}
+
+function getMilitaryProfile(track) {
+  if (!track?.military) return null;
+  const operator = (track.operator || "").toLowerCase();
+  const endpoints = `${track.origin || ""} ${track.dest || ""}`.toLowerCase();
+
+  let nation = "Unknown";
+  let service = track.type === "vessel" ? "Navy" : track.type === "aircraft" ? "Air Force" : "Space / ISR";
+  let role = track.type === "vessel" ? "Surface combatant" : track.type === "aircraft" ? "Patrol / transport" : "Recon / ISR";
+  let mission = "Strategic watch";
+  let priority = "Routine";
+
+  if (operator.includes("us navy") || operator.includes("usaf") || operator.includes("us government")) nation = "United States";
+  if (operator.includes("royal navy")) nation = "United Kingdom";
+  if (operator.includes("russian")) nation = "Russia";
+  if (operator.includes("indian")) nation = "India";
+  if (operator.includes("pla") || operator === "plan") nation = "China";
+  if (operator.includes("kpaf") || operator.includes("kpn")) nation = "North Korea";
+  if (operator.includes("rocn")) nation = "Taiwan";
+
+  if (track.type === "aircraft" && service === "Air Force") role = "Airlift / patrol";
+  if (track.type === "vessel" && service === "Navy") role = nation === "United States" || nation === "United Kingdom" ? "Carrier / escort transit" : "Patrol / surface action";
+
+  if (endpoints.includes("tpe") || endpoints.includes("tai")) {
+    mission = "Taiwan Strait posture";
+    priority = "High";
+  } else if (endpoints.includes("fnj") || endpoints.includes("wsn") || endpoints.includes("nam") || endpoints.includes("cho") || endpoints.includes("ras")) {
+    mission = "Korean Peninsula watch";
+    priority = "High";
+  } else if (endpoints.includes("dov") || endpoints.includes("rms") || endpoints.includes("gib") || endpoints.includes("sue")) {
+    mission = "Atlantic / Med transit";
+    priority = "Elevated";
+  } else if (endpoints.includes("viz") || endpoints.includes("and") || endpoints.includes("chn") || endpoints.includes("koc")) {
+    mission = "Indian Ocean posture";
+    priority = "Elevated";
+  }
+
+  let theater = "Global";
+  if (hasLonLat(track)) {
+    if (track.lon > 115 && track.lon < 145 && track.lat > 20 && track.lat < 50) theater = "East Asia / NW Pacific";
+    else if (track.lon > 65 && track.lon < 95 && track.lat > 5 && track.lat < 30) theater = "South Asia / Indian Ocean";
+    else if (track.lon > 46 && track.lon < 60 && track.lat > 20 && track.lat < 30) theater = "Gulf / Arabian Sea";
+    else if (track.lon > -10 && track.lon < 40 && track.lat > 30 && track.lat < 60) theater = "Europe / East Med";
+    else if (track.lon < -20 && track.lon > -90 && track.lat > 20 && track.lat < 55) theater = "North Atlantic";
+  }
+
+  return { nation, service, role, mission, theater, priority };
+}
+
+function summarizeMilitary(tracks) {
+  const profiled = tracks.filter((track) => track?.military).map((track) => ({ profile: getMilitaryProfile(track) })).filter((item) => item.profile);
+  const countBy = (key) => Object.entries(profiled.reduce((acc, item) => {
+    const value = item.profile[key];
+    acc[value] = (acc[value] || 0) + 1;
+    return acc;
+  }, {})).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  return {
+    total: profiled.length,
+    nations: countBy("nation").slice(0, 6),
+    services: countBy("service").slice(0, 4),
+    theaters: countBy("theater").slice(0, 4),
+    priorities: countBy("priority").slice(0, 3),
+  };
+}
+
+function getCountryFromTrack(track) {
+  if (!track) return null;
+  const military = getMilitaryProfile(track);
+  if (military?.nation && COUNTRY_INTEL[military.nation]) return military.nation;
+  if (track.type === "aircraft") {
+    const from = AIRPORTS[track.origin]?.country;
+    const to = AIRPORTS[track.dest]?.country;
+    return COUNTRY_INTEL[from] ? from : COUNTRY_INTEL[to] ? to : null;
+  }
+  if (track.type === "vessel") {
+    const from = PORTS[track.origin]?.country;
+    const to = PORTS[track.dest]?.country;
+    return COUNTRY_INTEL[from] ? from : COUNTRY_INTEL[to] ? to : null;
+  }
+  return null;
+}
+
+function getTrackSignificance(track) {
+  if (!track) return "No asset selected.";
+  const military = getMilitaryProfile(track);
+  if (military) {
+    return `${military.nation} ${military.service.toLowerCase()} ${track.type} linked to ${military.mission.toLowerCase()} in ${military.theater}. Priority is ${military.priority.toLowerCase()} because the route touches a live strategic corridor.`;
+  }
+  if (track.type === "vessel") {
+    const vesselClass = track.vesselClass ? `${track.vesselClass} vessel` : "commercial vessel";
+    const chokepointText = track.chokepoints?.length ? ` It touches ${track.chokepoints.join(", ")}, which makes it more strategically sensitive.` : "";
+    return `${vesselClass[0].toUpperCase()}${vesselClass.slice(1)} moving between ${PORTS[track.origin]?.city || track.origin} and ${PORTS[track.dest]?.city || track.dest}. This matters because shipping lanes are where regional conflict turns into price and supply shocks.${chokepointText}`;
+  }
+  if (track.type === "aircraft") {
+    return `Commercial air traffic between ${AIRPORTS[track.origin]?.city || track.origin} and ${AIRPORTS[track.dest]?.city || track.dest}. This matters because air routing bends quickly when conflict, airspace restrictions, or alliance strain intensify.`;
+  }
+  return "Orbital asset shaping the wider awareness picture rather than a country-to-country route.";
+}
+
+function getEndpoint(track, side) {
+  if (!track) return null;
+  const code = side === "origin" ? track.origin : track.dest;
+  if (!code) return null;
+  const source = track.type === "aircraft" ? AIRPORTS : PORTS;
+  return source[code] ? { ...source[code], code } : { code, city: code, country: "Unknown", lon: null, lat: null };
+}
+
+function routeLabel(track) {
+  const origin = getEndpoint(track, "origin");
+  const dest = getEndpoint(track, "dest");
+  if (!origin || !dest) return track?.type === "satellite" ? "Orbital ground track" : "Unknown route";
+  return `${origin.city} (${origin.code}) to ${dest.city} (${dest.code})`;
+}
+
+function getAssetNation(track) {
+  if (!track) return "Unknown";
+  const military = getMilitaryProfile(track);
+  if (military?.nation && military.nation !== "Unknown") return military.nation;
+  const origin = getEndpoint(track, "origin");
+  const dest = getEndpoint(track, "dest");
+  if (track.type === "satellite") {
+    if ((track.operator || "").includes("SpaceX")) return "United States";
+    if ((track.operator || "").includes("OneWeb")) return "United Kingdom";
+    if ((track.operator || "").includes("ISS")) return "Multinational";
+    if ((track.operator || "").includes("US Government")) return "United States";
+    return "Commercial / multinational";
+  }
+  return origin?.country || dest?.country || "Unknown";
+}
+
+function getOsintSourcesForTrack(track) {
+  if (!track) return [];
+  if (track.osint?.source) return [track.osint.source, track.osint.confidence || "Provider-normalized observation", ...getOsintSourcesForTrack({ ...track, osint: null })];
+  if (track.type === "aircraft") return ["ADS-B / Mode-S feeds", "OpenSky-style state vectors", "airport/airline schedules", "NOTAM and airspace advisories"];
+  if (track.type === "vessel") return ["AIS terrestrial/satellite feeds", "port call records", "vessel registry and flag databases", "maritime advisories and chokepoint reports"];
+  return ["CelesTrak / Space-Track TLE catalogs", "operator constellation filings", "public orbital element sets", "ground-track prediction"];
+}
+
+function getPredictedPurpose(track) {
+  if (!track) return { purpose: "No track selected.", confidence: "Low" };
+  const military = getMilitaryProfile(track);
+  if (military) {
+    return {
+      purpose: `${military.mission}. The route, operator, and service profile suggest ${military.role.toLowerCase()} activity in ${military.theater}.`,
+      confidence: military.priority === "High" ? "Medium-high" : "Medium",
+    };
+  }
+  if (track.type === "vessel") {
+    const classPurpose = {
+      container: "containerized cargo movement across scheduled commercial lanes",
+      tanker: "liquid energy or refined product transport with energy-market sensitivity",
+      lng: "LNG movement, likely tied to power generation and energy supply contracts",
+      bulk: "dry bulk commodity transport such as grain, ore, or industrial inputs",
+      "ro-ro": "vehicle or rolling-equipment transport",
+    };
+    const chokepointText = track.chokepoints?.length ? ` It is strategically relevant because it intersects ${track.chokepoints.join(", ")}.` : "";
+    return { purpose: `${classPurpose[track.vesselClass] || "commercial maritime movement"}.${chokepointText}`, confidence: "Medium" };
+  }
+  if (track.type === "aircraft") {
+    const origin = getEndpoint(track, "origin");
+    const dest = getEndpoint(track, "dest");
+    return {
+      purpose: `Commercial passenger/cargo movement on the ${origin?.city || track.origin} to ${dest?.city || track.dest} corridor. Routing sensitivity rises near restricted airspace or conflict zones.`,
+      confidence: "Medium",
+    };
+  }
+  return {
+    purpose: `${track.operator} orbital coverage pass. Likely communications, Earth observation, or ISR support depending on operator category.`,
+    confidence: track.category === "military" ? "Medium" : "Low-medium",
+  };
+}
+
+function getTrackHistory(track, history) {
+  const points = history?.[track?.id] || [];
+  if (!track || points.length === 0) return "No recent trail points captured yet.";
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (!Array.isArray(first) || !Array.isArray(last)) return "Recent trail is unavailable.";
+  return `${points.length} recent positions from ${first[1].toFixed(2)}, ${first[0].toFixed(2)} to ${last[1].toFixed(2)}, ${last[0].toFixed(2)}.`;
+}
+
+function getAssetDossier(track, history) {
+  if (!track) return null;
+  const origin = getEndpoint(track, "origin");
+  const dest = getEndpoint(track, "dest");
+  const military = getMilitaryProfile(track);
+  const prediction = getPredictedPurpose(track);
+  return {
+    id: track.id,
+    type: track.type,
+    category: track.category,
+    operator: track.operator || "Unknown operator",
+    nation: getAssetNation(track),
+    route: routeLabel(track),
+    origin,
+    dest,
+    military,
+    prediction,
+    historySummary: getTrackHistory(track, history),
+    speed: track.speed ? Math.round(track.speed) : null,
+    altitude: track.type === "aircraft" ? Math.round(track.altitude || 0) : track.type === "satellite" ? Math.round(track.altitude || 0) : null,
+    heading: Math.round(track.heading || 0),
+    chokepoints: track.chokepoints || [],
+    vesselClass: track.vesselClass,
+    sources: getOsintSourcesForTrack(track),
+  };
+}
+
+function summarizeChokepointTraffic(tracks) {
+  return CHOKEPOINTS.map((chokepoint) => {
+    const matches = tracks.filter((track) => track.chokepoints?.includes(chokepoint.name));
+    const vessels = matches.filter((track) => track.type === "vessel");
+    const aircraft = matches.filter((track) => track.type === "aircraft");
+    const military = matches.filter((track) => track.military);
+    const vesselClasses = VESSEL_CLASS_OPTIONS.filter((name) => name !== "all").map((name) => ({
+      name,
+      count: vessels.filter((track) => track.vesselClass === name).length,
+    })).filter((item) => item.count > 0);
+
+    return {
+      ...chokepoint,
+      tracks: matches,
+      vessels,
+      aircraft,
+      military,
+      vesselClasses,
+    };
+  });
+}
+
+function enrichOsintTracks(tracks) {
+  return tracks.map((track) => ({
+    ...track,
+    chokepoints: track.chokepoints?.length ? track.chokepoints : routeChokepointsForPoints([{ lng: track.lon, lat: track.lat }]),
+  }));
+}
+
+function TrackIcon({ type }) {
+  if (type === "aircraft") return <Plane className="h-4 w-4" />;
+  if (type === "satellite") return <Satellite className="h-4 w-4" />;
+  return <Ship className="h-4 w-4" />;
+}
+
+function RegistryRow({ track, selected, onSelect }) {
+  const military = getMilitaryProfile(track);
+  return (
+    <button onClick={() => onSelect(track)} className={`w-full rounded-2xl border p-3 text-left transition ${selected?.id === track.id ? "border-cyan-400/50 bg-zinc-900" : "border-zinc-800 bg-zinc-950 hover:bg-zinc-900"}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="rounded-xl bg-zinc-900 p-2"><TrackIcon type={track.type} /></div>
+          <div>
+            <div className="font-medium text-zinc-100">{track.id}</div>
+            <div className="text-xs text-zinc-400">{track.operator}</div>
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <Badge className={badgeTone(track.type, track.category)}>{track.category}</Badge>
+          {track.vesselClass && <Badge className={vesselClassTone(track.vesselClass)}>{track.vesselClass}</Badge>}
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-zinc-400">
+        <div>{track.type}</div>
+        <div>Lat {track.lat.toFixed(1)}</div>
+        <div>Lon {track.lon.toFixed(1)}</div>
+      </div>
+      {track.chokepoints?.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{track.chokepoints.map((name) => <Badge key={name} className="border-zinc-700 bg-zinc-900 text-zinc-100">{name}</Badge>)}</div>}
+      {military && <div className="mt-3 rounded-xl border border-orange-400/15 bg-orange-500/5 p-2 text-[11px] text-zinc-300"><div>{military.nation} • {military.service}</div><div className="text-zinc-400">{military.role}, {military.mission}</div></div>}
+    </button>
+  );
+}
+
+function GlobePanel({ tracks, selected, onSelect, regionKey, setRegionKey, ui, setUi, stats, history, goToRegion, selectCountry }) {
+  const mapHostRef = useRef(null);
+  const dragRef = useRef(null);
+  const viewRef = useRef(null);
+  const viewRafRef = useRef(null);
+  const interactionTimerRef = useRef(null);
+  const countryFeatures = useMemo(() => feature(countriesAtlas, countriesAtlas.objects.countries).features, []);
+  const [view, setView] = useState(() => {
+    const preset = REGION_PRESETS[regionKey] || REGION_PRESETS.global;
+    return { lon: preset.lng, lat: preset.lat, scale: Math.round(260 / preset.altitude) };
+  });
+  const [mapMoving, setMapMoving] = useState(false);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  const markMapMoving = () => {
+    setMapMoving(true);
+    if (interactionTimerRef.current) window.clearTimeout(interactionTimerRef.current);
+    interactionTimerRef.current = window.setTimeout(() => setMapMoving(false), 180);
+  };
+
+  const applyView = (updater) => {
+    const baseView = viewRef.current || view;
+    const nextView = updater(baseView);
+    viewRef.current = nextView;
+    markMapMoving();
+    if (viewRafRef.current) return;
+    viewRafRef.current = window.requestAnimationFrame(() => {
+      viewRafRef.current = null;
+      setView(viewRef.current);
+    });
+  };
+
+  useEffect(() => {
+    const preset = REGION_PRESETS[regionKey] || REGION_PRESETS.global;
+    const nextView = { lon: preset.lng, lat: preset.lat, scale: Math.round(260 / preset.altitude) };
+    viewRef.current = nextView;
+    setView(nextView);
+  }, [regionKey]);
+
+  useEffect(() => {
+    const node = mapHostRef.current;
+    if (!node) return undefined;
+    const preventWheel = (event) => event.preventDefault();
+    node.addEventListener("wheel", preventWheel, { passive: false });
+    return () => node.removeEventListener("wheel", preventWheel);
+  }, []);
+
+  useEffect(() => () => {
+    if (viewRafRef.current) window.cancelAnimationFrame(viewRafRef.current);
+    if (interactionTimerRef.current) window.clearTimeout(interactionTimerRef.current);
+  }, []);
+
+  const projection = useMemo(() => geoOrthographic().translate([600, 340]).scale(view.scale).rotate([-view.lon, -view.lat]).clipAngle(90).precision(mapMoving ? 1.25 : 0.55), [mapMoving, view]);
+  const path = useMemo(() => geoPath(projection), [projection]);
+  const graticule = useMemo(() => geoGraticule10(), []);
+
+  const isFront = (lon, lat) => hasLonLat({ lon, lat }) && geoDistance([lon, lat], [view.lon, view.lat]) <= Math.PI / 2;
+  const zoomBy = (factor) => applyView((current) => ({ ...current, scale: clamp(current.scale * factor, 180, 2200) }));
+  const focusSelectedOnMap = () => {
+    if (!selected || !hasLonLat(selected)) return;
+    const nextView = { lon: selected.lon, lat: selected.lat, scale: selected.type === "satellite" ? 900 : 1500 };
+    viewRef.current = nextView;
+    setView(nextView);
+  };
+
+  const onPointerDown = (event) => {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    dragRef.current = { x: event.clientX, y: event.clientY, lon: view.lon, lat: view.lat };
+    markMapMoving();
+  };
+  const onPointerMove = (event) => {
+    if (!dragRef.current) return;
+    const dx = event.clientX - dragRef.current.x;
+    const dy = event.clientY - dragRef.current.y;
+    const currentView = viewRef.current || view;
+    const sensitivity = 120 / currentView.scale;
+    applyView((current) => ({ ...current, lon: normalizeLon(dragRef.current.lon - dx * sensitivity), lat: clamp(dragRef.current.lat + dy * sensitivity, -80, 80) }));
+  };
+  const onPointerUp = (event) => {
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    dragRef.current = null;
+  };
+
+  const safeTracks = useMemo(() => tracks.filter(hasLonLat), [tracks]);
+  const visibleTracks = useMemo(() => safeTracks.filter((track) => isFront(track.lon, track.lat)), [safeTracks, view.lon, view.lat]);
+
+  const airArcs = useMemo(() => ui.airTraffic && !mapMoving ? AIR_ROUTES.map((route, index) => {
+    const from = AIRPORTS[route.from];
+    const to = AIRPORTS[route.to];
+    if (!from || !to || !hasLonLat(from) || !hasLonLat(to)) return null;
+    return {
+      id: `air-${index}`,
+      category: route.category,
+      d: path({ type: "LineString", coordinates: buildArcPoints({ lat: from.lat, lng: from.lon }, { lat: to.lat, lng: to.lon }).map((point) => [point.lng, point.lat]) }),
+    };
+  }).filter(Boolean) : [], [ui.airTraffic, mapMoving, path]);
+
+  const seaArcs = useMemo(() => ui.maritimeTraffic && !mapMoving ? SEA_LANES.map((route, index) => {
+    const from = PORTS[route.from];
+    const to = PORTS[route.to];
+    if (!from || !to || !hasLonLat(from) || !hasLonLat(to)) return null;
+    return {
+      id: `sea-${index}`,
+      category: route.category,
+      vesselClass: route.vesselClass || null,
+      d: path({ type: "LineString", coordinates: buildArcPoints({ lat: from.lat, lng: from.lon }, { lat: to.lat, lng: to.lon }).map((point) => [point.lng, point.lat]) }),
+    };
+  }).filter(Boolean) : [], [ui.maritimeTraffic, mapMoving, path]);
+
+  const projectedCountryLabels = useMemo(() => ui.labels && !mapMoving ? COUNTRY_LABELS.filter((item) => isFront(item.lon, item.lat)).map((item) => {
+    const point = projection([item.lon, item.lat]);
+    return point && Number.isFinite(point[0]) && Number.isFinite(point[1]) ? { ...item, x: point[0], y: point[1] } : null;
+  }).filter(Boolean) : [], [ui.labels, mapMoving, projection, view.lon, view.lat]);
+
+  const projectedCityLabels = useMemo(() => ui.labels && !mapMoving && view.scale > 360 ? CITY_LABELS.filter((item) => isFront(item.lon, item.lat)).map((item) => {
+    const point = projection([item.lon, item.lat]);
+    return point && Number.isFinite(point[0]) && Number.isFinite(point[1]) ? { ...item, x: point[0], y: point[1] } : null;
+  }).filter(Boolean) : [], [ui.labels, mapMoving, projection, view.scale, view.lon, view.lat]);
+
+  const projectedChokepoints = useMemo(() => ui.chokepoints && !mapMoving ? CHOKEPOINTS.filter((item) => isFront(item.centerLon, item.centerLat)).map((item) => {
+    const point = projection([item.centerLon, item.centerLat]);
+    return point && Number.isFinite(point[0]) && Number.isFinite(point[1]) ? { ...item, x: point[0], y: point[1] } : null;
+  }).filter(Boolean) : [], [ui.chokepoints, mapMoving, projection, view.lon, view.lat]);
+
+  const safePath = (obj) => {
+    try {
+      return path(obj) || "";
+    } catch {
+      return "";
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-zinc-100">Areas</div>
+            <div className="text-xs text-zinc-400">Preset theaters plus drag and deep zoom.</div>
+          </div>
+          <Badge className="border-zinc-700 bg-zinc-900 text-zinc-100">{REGION_PRESETS[regionKey].name}</Badge>
+        </div>
+        <Tabs value={regionKey} onValueChange={(key) => { setRegionKey(key); goToRegion(key); }}>
+          <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 bg-zinc-950 p-1">
+            {REGION_KEYS.map((key) => <TabsTrigger key={key} value={key} className="text-xs">{REGION_PRESETS[key].name}</TabsTrigger>)}
+          </TabsList>
+        </Tabs>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
+            <Badge className="border-cyan-400/20 bg-cyan-400/10 text-cyan-200">{stats.aircraft} aircraft</Badge>
+            <Badge className="border-emerald-400/20 bg-emerald-400/10 text-emerald-200">{stats.vessels} vessels</Badge>
+            <Badge className="border-emerald-400/20 bg-emerald-400/10 text-emerald-200">{stats.commercialVessels} commercial</Badge>
+            <Badge className="border-orange-400/20 bg-orange-500/10 text-orange-200">{stats.militaryVessels} naval / military</Badge>
+            <Badge className="border-violet-400/20 bg-violet-400/10 text-violet-200">{stats.satellites} satellites</Badge>
+          </div>
+          <div className="text-xs text-zinc-400">Scroll stays inside the map. Drag rotates. Zoom now goes much deeper.</div>
+        </div>
+        <div className="mb-3 flex flex-wrap gap-2 text-xs">
+          <Badge className="border-cyan-400/20 bg-cyan-500/10 text-cyan-200"><Plane className="mr-2 h-4 w-4" /> Aircraft</Badge>
+          <Badge className="border-emerald-400/20 bg-emerald-500/10 text-emerald-200"><Ship className="mr-2 h-4 w-4" /> Commercial vessels</Badge>
+          <Badge className="border-rose-400/20 bg-rose-500/15 text-rose-200"><Ship className="mr-2 h-4 w-4" /> Military vessels</Badge>
+          <Badge className="border-violet-400/20 bg-violet-500/15 text-violet-200"><Satellite className="mr-2 h-4 w-4" /> Satellites</Badge>
+          <Badge className="border-red-400/20 bg-red-500/10 text-red-200">Claimed mine area</Badge>
+        </div>
+
+        <div ref={mapHostRef} className="overflow-hidden rounded-[24px] border border-zinc-800 bg-black" style={{ overscrollBehavior: "contain", touchAction: "none" }}>
+          <svg
+            viewBox="0 0 1200 680"
+            className="h-[680px] w-full select-none"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerLeave={onPointerUp}
+            onWheel={(event) => {
+              event.preventDefault();
+              zoomBy(event.deltaY < 0 ? 1.14 : 0.88);
+            }}
+          >
+            <defs>
+              <radialGradient id="globeFill" cx="44%" cy="35%" r="75%">
+                <stop offset="0%" stopColor={ui.mode === "thermal" ? "#3b1308" : ui.mode === "night" ? "#0c1630" : "#15314d"} />
+                <stop offset="68%" stopColor={ui.mode === "thermal" ? "#170905" : ui.mode === "night" ? "#07101c" : "#09111d"} />
+                <stop offset="100%" stopColor="#020406" />
+              </radialGradient>
+            </defs>
+            <path d={safePath({ type: "Sphere" })} fill="url(#globeFill)" stroke="rgba(255,255,255,0.24)" strokeWidth="1.5" />
+            <path d={safePath(graticule)} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="0.8" />
+
+            {countryFeatures.map((country, index) => (
+              <path key={index} d={safePath(country)} fill="rgba(80,130,220,0.16)" stroke="rgba(230,240,255,0.34)" strokeWidth={view.scale > 700 ? 1 : 0.7} />
+            ))}
+
+            {NO_FLY.map((zone) => (
+              <path
+                key={zone.name}
+                d={safePath({ type: "Polygon", coordinates: [[[zone.west, zone.south], [zone.east, zone.south], [zone.east, zone.north], [zone.west, zone.north], [zone.west, zone.south]]] })}
+                fill={zone.kind === "high" ? "rgba(239,68,68,0.12)" : "rgba(245,158,11,0.12)"}
+                stroke={zone.kind === "high" ? "rgba(248,113,113,0.85)" : "rgba(251,191,36,0.85)"}
+                strokeDasharray="6 5"
+              />
+            ))}
+
+            {CLAIMED_MINE_AREAS.map((area) => (
+              <g key={area.id}>
+                <path
+                  d={safePath({ type: "Polygon", coordinates: [area.coordinates] })}
+                  fill={area.kind === "claimed-safe" ? "rgba(34,197,94,0.08)" : "rgba(244,63,94,0.16)"}
+                  stroke={area.kind === "claimed-safe" ? "rgba(74,222,128,0.78)" : "rgba(251,113,133,0.9)"}
+                  strokeWidth={area.kind === "claimed-safe" ? 1.2 : 1.6}
+                  strokeDasharray={area.kind === "claimed-safe" ? "8 5" : "3 3"}
+                />
+                {!mapMoving && isFront(area.centerLon, area.centerLat) && (() => {
+                  const point = projection([area.centerLon, area.centerLat]);
+                  return point && Number.isFinite(point[0]) && Number.isFinite(point[1]) ? <text x={point[0]} y={point[1]} textAnchor="middle" fill={area.kind === "claimed-safe" ? "rgba(134,239,172,0.9)" : "rgba(251,113,133,0.95)"} fontSize="10.5">{area.name}</text> : null;
+                })()}
+              </g>
+            ))}
+
+            {airArcs.map((arc) => <path key={arc.id} d={arc.d || ""} fill="none" stroke={arc.category === "military" ? "rgba(251,146,60,0.52)" : "rgba(103,232,249,0.22)"} strokeWidth={arc.category === "military" ? 1.5 : 1} />)}
+            {seaArcs.map((arc) => (
+              <path
+                key={arc.id}
+                d={arc.d || ""}
+                fill="none"
+                stroke={arc.category === "military" ? "rgba(253,164,175,0.48)" : arc.vesselClass === "tanker" ? "rgba(251,146,60,0.28)" : arc.vesselClass === "lng" ? "rgba(217,70,239,0.28)" : arc.vesselClass === "bulk" ? "rgba(245,158,11,0.26)" : arc.vesselClass === "ro-ro" ? "rgba(16,185,129,0.26)" : "rgba(134,239,172,0.22)"}
+                strokeWidth={arc.category === "military" ? 1.5 : 1.1}
+                strokeDasharray={arc.category === "military" ? "4 3" : undefined}
+              />
+            ))}
+
+            {ui.trails && !mapMoving && visibleTracks.map((track) => (
+              <path
+                key={`${track.id}-trail`}
+                d={safePath({ type: "LineString", coordinates: (history[track.id] || []).filter((point) => Array.isArray(point) && hasLonLat({ lon: point[0], lat: point[1] })) })}
+                fill="none"
+                stroke={pointColor(track)}
+                strokeOpacity="0.34"
+                strokeWidth={track.type === "satellite" ? 1.5 : 2}
+              />
+            ))}
+
+            {visibleTracks.map((track) => {
+              const point = projection([track.lon, track.lat]);
+              if (!point || !Number.isFinite(point[0]) || !Number.isFinite(point[1])) return null;
+              const selectedNow = selected?.id === track.id;
+              return (
+                <g key={track.id} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onSelect(track); }} className="cursor-pointer">
+                  <circle cx={point[0]} cy={point[1]} r={selectedNow ? 13 : track.type === "vessel" ? 8 : track.type === "aircraft" ? 7 : 6} fill={pointColor(track)} fillOpacity={track.type === "vessel" ? "0.28" : "0.18"} stroke={selectedNow ? "#ffffff" : pointColor(track)} strokeOpacity="0.85" strokeWidth={selectedNow ? 1.5 : 0.8} />
+                  {track.type === "aircraft" && <path d={`M ${point[0]} ${point[1] - 7} L ${point[0] + 5} ${point[1] + 6} L ${point[0]} ${point[1] + 3} L ${point[0] - 5} ${point[1] + 6} Z`} fill={pointColor(track)} />}
+                  {track.type === "satellite" && <g><rect x={point[0] - 2} y={point[1] - 2} width="4" height="4" fill={pointColor(track)} /><line x1={point[0] - 6} y1={point[1]} x2={point[0] - 2} y2={point[1]} stroke={pointColor(track)} /><line x1={point[0] + 2} y1={point[1]} x2={point[0] + 6} y2={point[1]} stroke={pointColor(track)} /></g>}
+                  {track.type === "vessel" && <path d={`M ${point[0]} ${point[1] - 7} L ${point[0] + 6} ${point[1] + 6} L ${point[0] - 6} ${point[1] + 6} Z`} fill={pointColor(track)} stroke="rgba(0,0,0,0.55)" strokeWidth="0.8" />}
+                  {ui.labels && !mapMoving && view.scale > 320 && <><line x1={point[0]} y1={point[1]} x2={point[0] + 12} y2={point[1] - 9} stroke={pointColor(track)} strokeOpacity="0.7" /><text x={point[0] + 15} y={point[1] - 11} fill={pointColor(track)} fontSize="10.5">{track.id}</text></>}
+                </g>
+              );
+            })}
+
+            {projectedCountryLabels.map((label) => (
+              <text key={label.name} x={label.x} y={label.y} textAnchor="middle" fill="rgba(255,255,255,0.84)" fontSize={view.scale > 700 ? 12 : 10.5} style={{ letterSpacing: 1.05 }} onClick={() => COUNTRY_INTEL[label.name] && selectCountry(label.name)}>
+                {label.name.toUpperCase()}
+              </text>
+            ))}
+            {projectedCityLabels.map((label) => (
+              <g key={label.name}>
+                <circle cx={label.x} cy={label.y} r={label.tier === 1 ? 2.8 : 2.2} fill="rgba(255,255,255,0.92)" />
+                <text x={label.x + 5} y={label.y - 4} fill="rgba(190,210,255,0.82)" fontSize={label.tier === 1 ? 10 : 9}>{label.name}</text>
+              </g>
+            ))}
+            {projectedChokepoints.map((item) => (
+              <g key={item.name}>
+                <circle cx={item.x} cy={item.y} r={view.scale > 700 ? 14 : 10} fill="none" stroke={item.severity === "high" ? "rgba(251,113,133,0.8)" : "rgba(96,165,250,0.8)"} strokeWidth="1.4" strokeDasharray="4 4" />
+                <text x={item.x} y={item.y - 16} textAnchor="middle" fill={item.severity === "high" ? "rgba(251,113,133,0.92)" : "rgba(96,165,250,0.92)"} fontSize="10.5">{item.name}</text>
+              </g>
+            ))}
+          </svg>
+        </div>
+      </div>
+
+      <div className="grid gap-3 rounded-2xl border border-zinc-800 bg-zinc-950 p-3 lg:grid-cols-3">
+        <div>
+          <div className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">Camera</div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="outline" className="justify-start border-zinc-700 bg-zinc-950 text-zinc-100" onClick={focusSelectedOnMap}><LocateFixed className="mr-2 h-4 w-4" />Focus asset</Button>
+            <Button variant="outline" className="justify-start border-zinc-700 bg-zinc-950 text-zinc-300" onClick={() => { setRegionKey("global"); goToRegion("global"); }}><GlobeIcon className="mr-2 h-4 w-4" />Reset view</Button>
+            <Button variant="outline" className="justify-start border-zinc-700 bg-zinc-950 text-zinc-300" onClick={() => zoomBy(1.14)}>Zoom in</Button>
+            <Button variant="outline" className="justify-start border-zinc-700 bg-zinc-950 text-zinc-300" onClick={() => zoomBy(0.88)}>Zoom out</Button>
+          </div>
+        </div>
+        <div>
+          <div className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">Display</div>
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => setUi((current) => ({ ...current, labels: !current.labels }))} className={`rounded-xl border px-3 py-2 text-left text-sm ${ui.labels ? "border-cyan-400/50 bg-zinc-900 text-zinc-100" : "border-zinc-800 bg-zinc-950 text-zinc-400"}`}>Labels {ui.labels ? "On" : "Off"}</button>
+            <button onClick={() => setUi((current) => ({ ...current, trails: !current.trails }))} className={`rounded-xl border px-3 py-2 text-left text-sm ${ui.trails ? "border-cyan-400/50 bg-zinc-900 text-zinc-100" : "border-zinc-800 bg-zinc-950 text-zinc-400"}`}>Trails {ui.trails ? "On" : "Off"}</button>
+            <button onClick={() => setUi((current) => ({ ...current, airTraffic: !current.airTraffic }))} className={`rounded-xl border px-3 py-2 text-left text-sm ${ui.airTraffic ? "border-cyan-400/50 bg-zinc-900 text-zinc-100" : "border-zinc-800 bg-zinc-950 text-zinc-400"}`}>Air lanes {ui.airTraffic ? "On" : "Off"}</button>
+            <button onClick={() => setUi((current) => ({ ...current, maritimeTraffic: !current.maritimeTraffic }))} className={`rounded-xl border px-3 py-2 text-left text-sm ${ui.maritimeTraffic ? "border-cyan-400/50 bg-zinc-900 text-zinc-100" : "border-zinc-800 bg-zinc-950 text-zinc-400"}`}>Sea lanes {ui.maritimeTraffic ? "On" : "Off"}</button>
+            <button onClick={() => setUi((current) => ({ ...current, chokepoints: !current.chokepoints }))} className={`rounded-xl border px-3 py-2 text-left text-sm ${ui.chokepoints ? "border-cyan-400/50 bg-zinc-900 text-zinc-100" : "border-zinc-800 bg-zinc-950 text-zinc-400"}`}>Chokepoints {ui.chokepoints ? "On" : "Off"}</button>
+            <button onClick={() => setUi((current) => ({ ...current, labels: true, trails: true, airTraffic: true, maritimeTraffic: true, chokepoints: true }))} className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-left text-sm text-zinc-400">Restore defaults</button>
+          </div>
+        </div>
+        <div>
+          <div className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">Modes</div>
+          <div className="grid grid-cols-2 gap-2">
+            {[ ["standard", "Standard"], ["night", "Night"], ["thermal", "Thermal"], ["traffic", "Traffic"] ].map(([value, label]) => (
+              <button key={value} onClick={() => setUi((current) => ({ ...current, mode: value }))} className={`rounded-xl border px-3 py-2 text-left text-sm ${ui.mode === value ? "border-cyan-400/50 bg-zinc-900 text-zinc-100" : "border-zinc-800 bg-zinc-950 text-zinc-400"}`}>{label}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function PublicSituationalAwarenessDashboard() {
+  const frameRef = useRef(0);
+  const tracksRef = useRef(TRACKS_SEED);
+  const [tracks, setTracks] = useState(TRACKS_SEED);
+  const [selected, setSelected] = useState(() => TRACKS_SEED[0] || null);
+  const [history, setHistory] = useState(() => {
+    const initial = {};
+    TRACKS_SEED.filter(hasLonLat).forEach((track) => {
+      initial[track.id] = [[track.lon, track.lat]];
+    });
+    return initial;
+  });
+  const [playing, setPlaying] = useState(true);
+  const [liveMode, setLiveMode] = useState(true);
+  const [timeline, setTimeline] = useState([56]);
+  const [regionKey, setRegionKey] = useState("global");
+  const [ui, setUi] = useState({ labels: true, trails: true, airTraffic: true, maritimeTraffic: true, chokepoints: true, mode: "standard" });
+  const [query, setQuery] = useState("");
+  const [onlyMilitary, setOnlyMilitary] = useState(false);
+  const [hideCommercial, setHideCommercial] = useState(false);
+  const [showTypes, setShowTypes] = useState({ aircraft: true, vessel: true, satellite: true });
+  const [refreshMs, setRefreshMs] = useState([1200]);
+  const [selectedCountry, setSelectedCountry] = useState(null);
+  const [vesselClassFilter, setVesselClassFilter] = useState("all");
+  const [lastUpdated, setLastUpdated] = useState(new Date());
+  const [osintEnabled, setOsintEnabled] = useState(false);
+  const [osintStatus, setOsintStatus] = useState({ state: "idle", generatedAt: null, sources: [], error: null });
+  const [liveFeed, setLiveFeed] = useState(() => [
+    { id: "boot-0", ts: new Date(), level: "info", title: "Live feed ready", detail: "Synthetic global watch surface online." },
+    { id: "boot-1", ts: new Date(), level: "info", title: "Global traffic baseline", detail: `${TRACKS_SEED.filter((track) => track.type === "aircraft").length} air tracks and ${TRACKS_SEED.filter((track) => track.type === "vessel").length} maritime tracks initialized.` },
+  ]);
+
+  const validationErrors = useMemo(() => [...validateSeed(TRACKS_SEED), ...validateRegions(REGION_PRESETS), ...validateReferences()], []);
+
+  useEffect(() => {
+    if (!osintEnabled) return undefined;
+    let cancelled = false;
+
+    const refreshOsint = async (force = false) => {
+      setOsintStatus((current) => ({ ...current, state: "loading", error: null }));
+      try {
+        const snapshot = await fetchOsintSnapshot({ force });
+        if (cancelled) return;
+        const osintTracks = enrichOsintTracks(snapshot.tracks || []);
+        const merged = mergeOsintTracks(tracksRef.current, osintTracks);
+        tracksRef.current = merged;
+        setTracks(merged);
+        setHistory((old) => {
+          const copy = { ...old };
+          osintTracks.forEach((track) => {
+            if (hasLonLat(track)) {
+              copy[track.id] = [...(copy[track.id] || []), [track.lon, track.lat]].slice(-22);
+            }
+          });
+          return copy;
+        });
+        setOsintStatus({ state: snapshot.ok ? "connected" : "degraded", generatedAt: snapshot.generatedAt, sources: summarizeOsintSources(snapshot), error: null });
+        setLiveFeed((old) => [{
+          id: `osint-${Date.now()}`,
+          ts: new Date(),
+          level: snapshot.ok ? "info" : "warning",
+          title: "OSINT refresh",
+          detail: `${osintTracks.length} provider tracks merged from ${snapshot.sources?.length || 0} sources.`,
+        }, ...old].slice(0, 26));
+      } catch (error) {
+        if (cancelled) return;
+        setOsintStatus((current) => ({ ...current, state: "error", error: String(error.message || error) }));
+      }
+    };
+
+    refreshOsint(true);
+    const timer = setInterval(() => refreshOsint(false), 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [osintEnabled]);
+
+  useEffect(() => {
+    if (osintEnabled) return;
+    const cleanTracks = tracksRef.current.filter((track) => !track.osint);
+    tracksRef.current = cleanTracks;
+    setTracks(cleanTracks);
+    setOsintStatus({ state: "idle", generatedAt: null, sources: [], error: null });
+  }, [osintEnabled]);
+
+  useEffect(() => {
+    if (!playing || !liveMode) return undefined;
+    const timer = setInterval(() => {
+      const nextFrame = frameRef.current + 1;
+      frameRef.current = nextFrame;
+      const next = tracksRef.current.map((track) => stepTrack(track, nextFrame)).filter(Boolean);
+      tracksRef.current = next;
+      setTracks(next);
+      setHistory((old) => {
+        const copy = { ...old };
+        next.forEach((track) => {
+          if (hasLonLat(track)) {
+            const points = [...(copy[track.id] || []), [track.lon, track.lat]];
+            copy[track.id] = points.slice(-22);
+          }
+        });
+        return copy;
+      });
+      setLastUpdated(new Date());
+      setLiveFeed((old) => [...buildLiveEntries(next, nextFrame, selected?.id), ...old].slice(0, 26));
+    }, refreshMs[0]);
+    return () => clearInterval(timer);
+  }, [playing, liveMode, refreshMs, selected]);
+
+  const safeTracks = useMemo(() => tracks.filter(hasLonLat), [tracks]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return safeTracks.filter((track) => {
+      if (!showTypes[track.type]) return false;
+      if (onlyMilitary && !track.military) return false;
+      if (hideCommercial && track.category === "commercial") return false;
+      if (track.type === "vessel" && vesselClassFilter !== "all" && track.vesselClass !== vesselClassFilter) return false;
+      if (!q) return true;
+      return [track.id, track.operator, track.type, track.category, track.origin, track.dest, track.vesselClass].filter(Boolean).join(" ").toLowerCase().includes(q);
+    });
+  }, [safeTracks, query, onlyMilitary, hideCommercial, showTypes, vesselClassFilter]);
+
+  const selectedLive = filtered.find((track) => track.id === selected?.id) || safeTracks.find((track) => track.id === selected?.id) || filtered[0] || safeTracks[0] || null;
+  const timelineEvent = [...LIVE_EVENTS].sort((a, b) => Math.abs(a.t - timeline[0]) - Math.abs(b.t - timeline[0]))[0];
+  const liveStatus = liveMode ? (playing ? "Live" : "Standby") : "Offline";
+  const militarySummary = useMemo(() => summarizeMilitary(safeTracks), [safeTracks]);
+  const selectedMilitary = useMemo(() => getMilitaryProfile(selectedLive), [selectedLive]);
+  const selectedCountryBrief = selectedCountry ? COUNTRY_INTEL[selectedCountry] || null : null;
+  const selectedTrackSignificance = useMemo(() => getTrackSignificance(selectedLive), [selectedLive]);
+  const linkedCountryFromAsset = useMemo(() => getCountryFromTrack(selectedLive), [selectedLive]);
+  const selectedDossier = useMemo(() => getAssetDossier(selectedLive, history), [selectedLive, history]);
+  const chokepointTraffic = useMemo(() => summarizeChokepointTraffic(safeTracks), [safeTracks]);
+
+  const stats = useMemo(() => {
+    const commercialVessels = safeTracks.filter((track) => track.type === "vessel" && track.category === "commercial");
+    return {
+      aircraft: safeTracks.filter((track) => track.type === "aircraft").length,
+      vessels: safeTracks.filter((track) => track.type === "vessel").length,
+      satellites: safeTracks.filter((track) => track.type === "satellite").length,
+      commercialVessels: commercialVessels.length,
+      militaryVessels: safeTracks.filter((track) => track.type === "vessel" && track.category === "military").length,
+      vesselClasses: VESSEL_CLASS_OPTIONS.filter((name) => name !== "all").map((name) => ({ name, count: commercialVessels.filter((track) => track.vesselClass === name).length })),
+    };
+  }, [safeTracks]);
+
+  const goToRegion = (key) => setRegionKey(key);
+  const selectTrack = (track) => {
+    if (!track?.id) return;
+    const latest = tracksRef.current.find((item) => item.id === track.id) || track;
+    setSelected(latest);
+    setSelectedCountry(null);
+  };
+
+  const resetAll = () => {
+    const reset = buildInitialTracks();
+    tracksRef.current = reset;
+    setTracks(reset);
+    setHistory(() => {
+      const initial = {};
+      reset.filter(hasLonLat).forEach((track) => {
+        initial[track.id] = [[track.lon, track.lat]];
+      });
+      return initial;
+    });
+    setSelected(reset[0] || null);
+    setRegionKey("global");
+    setTimeline([56]);
+    setSelectedCountry(null);
+    setOsintEnabled(false);
+    setVesselClassFilter("all");
+    setShowTypes({ aircraft: true, vessel: true, satellite: true });
+    setOnlyMilitary(false);
+    setHideCommercial(false);
+    setQuery("");
+    setLastUpdated(new Date());
+    setLiveFeed([{ id: `boot-${Date.now()}`, ts: new Date(), level: "info", title: "Feed reset", detail: "Live stream reset to baseline synthetic state." }]);
+  };
+
+  return (
+    <div className="min-h-screen bg-zinc-950 p-6 text-zinc-100 md:p-8">
+      <div className="mx-auto max-w-[1860px] space-y-6">
+        <div className="grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)_340px]">
+          <div className="space-y-6">
+            <Card className="rounded-[28px] border-zinc-800 bg-zinc-900/60">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg"><Search className="h-5 w-5 text-cyan-300" /> Filters</CardTitle>
+                <CardDescription className="text-zinc-400">Search, cut noise, and narrow the picture without burying the globe.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search track, operator, route, airport, port" className="border-zinc-700 bg-zinc-950" />
+                <div className="grid grid-cols-2 gap-2">
+                  {[ ["aircraft", `Aircraft ${stats.aircraft}`], ["vessel", `Vessels ${stats.vessels}`], ["satellite", `Satellites ${stats.satellites}`] ].map(([key, label]) => (
+                    <button key={key} onClick={() => setShowTypes((current) => ({ ...current, [key]: !current[key] }))} className={`rounded-xl border px-3 py-2 text-left text-sm ${showTypes[key] ? "border-cyan-400/40 bg-zinc-900 text-zinc-100" : "border-zinc-800 bg-zinc-950 text-zinc-500"}`}>{label}</button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex items-center justify-between rounded-2xl border border-zinc-800 bg-zinc-950 p-3">
+                    <div><div className="font-medium">Only military</div><div className="text-xs text-zinc-400">Cut the noise fast</div></div>
+                    <Switch checked={onlyMilitary} onCheckedChange={setOnlyMilitary} />
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl border border-zinc-800 bg-zinc-950 p-3">
+                    <div><div className="font-medium">Hide commercial</div><div className="text-xs text-zinc-400">Keep only state-linked traffic</div></div>
+                    <Switch checked={hideCommercial} onCheckedChange={setHideCommercial} />
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-3">
+                  <div className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">Commercial vessel classes</div>
+                  <div className="flex flex-wrap gap-2">
+                    {VESSEL_CLASS_OPTIONS.map((kind) => (
+                      <button key={kind} onClick={() => setVesselClassFilter(kind)} className={`rounded-full border px-3 py-1 text-xs ${vesselClassFilter === kind ? "border-cyan-400/40 bg-zinc-900 text-zinc-100" : "border-zinc-800 bg-zinc-950 text-zinc-400"}`}>{kind === "all" ? "All" : kind}</button>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">{stats.vesselClasses.map((item) => <Badge key={item.name} className={vesselClassTone(item.name)}>{item.name}: {item.count}</Badge>)}</div>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Activity className={`h-4 w-4 ${liveMode ? "text-emerald-300" : "text-zinc-500"}`} />
+                      <div>
+                        <div className="text-sm font-medium text-zinc-100">Live stream</div>
+                        <div className="text-xs text-zinc-400">{liveStatus} • last update {formatClock(lastUpdated)}</div>
+                      </div>
+                    </div>
+                    <Switch checked={liveMode} onCheckedChange={setLiveMode} />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs text-zinc-400"><span>Refresh cadence</span><span>{refreshMs[0]} ms</span></div>
+                    <Slider value={refreshMs} onValueChange={setRefreshMs} min={500} max={3000} step={100} />
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-zinc-100">OSINT feeds</div>
+                      <div className="text-xs text-zinc-400">{osintStatus.state === "connected" ? "Connected" : osintStatus.state === "loading" ? "Refreshing" : osintStatus.state === "degraded" ? "Partial data" : osintStatus.state === "error" ? "Error" : "Synthetic only"}</div>
+                    </div>
+                    <Switch checked={osintEnabled} onCheckedChange={setOsintEnabled} />
+                  </div>
+                  <div className="space-y-2 text-xs text-zinc-400">
+                    {osintStatus.sources.length === 0 && <div>Uses proxy endpoint /api/osint/snapshot.</div>}
+                    {osintStatus.sources.map((source) => (
+                      <div key={source.source} className="flex items-center justify-between gap-3">
+                        <span>{source.source}</span>
+                        <span className={source.ok ? "text-emerald-200" : "text-orange-200"}>{source.ok ? `${source.count} tracks` : source.error || "unavailable"}</span>
+                      </div>
+                    ))}
+                    {osintStatus.error && <div className="text-red-200">{osintStatus.error}</div>}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300">
+                  <div className="mb-2 font-medium text-zinc-100">Military posture</div>
+                  <div>Total military tracks: <span className="text-zinc-100">{militarySummary.total}</span></div>
+                  <div className="mt-2 flex flex-wrap gap-2">{militarySummary.nations.map((item) => <Badge key={item.name} className="border-orange-400/20 bg-orange-500/10 text-orange-200">{item.name}: {item.count}</Badge>)}</div>
+                </div>
+                {validationErrors.length > 0 && <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-100">{validationErrors.map((error) => <div key={error}>{error}</div>)}</div>}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-[28px] border-zinc-800 bg-zinc-900/60">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg"><Layers className="h-5 w-5 text-violet-300" /> Registry</CardTitle>
+                <CardDescription className="text-zinc-400">All rendered tracks, filtered by the controls above.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[760px] pr-4"><div className="space-y-3">{filtered.map((track) => <RegistryRow key={track.id} track={track} selected={selectedLive} onSelect={selectTrack} />)}</div></ScrollArea>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="space-y-6">
+            <Card className="rounded-[28px] border-zinc-800 bg-zinc-900/60 shadow-2xl shadow-black/30">
+              <CardHeader>
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-3 text-2xl"><GlobeIcon className="h-6 w-6 text-cyan-300" /> Stable map</CardTitle>
+                    <CardDescription className="mt-2 text-zinc-400">Dependency-light SVG world map with country outlines, deeper zoom, drag navigation, and a much smaller failure surface.</CardDescription>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge className={`${liveMode ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-200" : "border-zinc-700 bg-zinc-900 text-zinc-400"}`}>{liveStatus}</Badge>
+                    <Button variant="outline" className="border-zinc-700 bg-zinc-950 text-zinc-100" onClick={() => setPlaying((value) => !value)}>{playing ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}{playing ? "Pause" : "Play"}</Button>
+                    <Button variant="outline" className="border-zinc-700 bg-zinc-950 text-zinc-100" onClick={resetAll}><RotateCcw className="mr-2 h-4 w-4" />Reset</Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <GlobePanel tracks={filtered} selected={selectedLive} onSelect={selectTrack} regionKey={regionKey} setRegionKey={setRegionKey} ui={ui} setUi={setUi} stats={stats} history={history} goToRegion={goToRegion} selectCountry={setSelectedCountry} />
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-[28px] border-zinc-800 bg-zinc-900/60">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg"><Layers className="h-5 w-5 text-cyan-300" /> Strategic briefing</CardTitle>
+                <CardDescription className="text-zinc-400">The globe now flows directly into a readable brief instead of making you infer significance from icons alone.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" className="border-zinc-700 bg-zinc-950 text-zinc-100" onClick={() => setSelectedCountry(null)}>Latest updates</Button>
+                  {Object.keys(COUNTRY_INTEL).map((country) => <button key={country} onClick={() => setSelectedCountry(country)} className={`rounded-full border px-3 py-1 text-xs ${selectedCountry === country ? "border-cyan-400/50 bg-zinc-900 text-zinc-100" : "border-zinc-800 bg-zinc-950 text-zinc-400"}`}>{country}</button>)}
+                </div>
+                {selectedCountryBrief ? (
+                  <div className="grid gap-3 xl:grid-cols-[1.2fr_0.8fr]">
+                    <div className="space-y-3">
+                      <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">{selectedCountry}</div><div className="mt-2 text-sm text-zinc-200">{selectedCountryBrief.stance}</div></div>
+                      <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">Why it matters</div><div className="mt-2 text-sm text-zinc-300">{selectedCountryBrief.significance}</div><div className="mt-3 text-xs text-zinc-400">{selectedCountryBrief.latest}</div><div className="mt-2 text-xs text-zinc-500">{selectedCountryBrief.whySignificant}</div></div>
+                      <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">Key relations</div><div className="mt-3 grid gap-3 md:grid-cols-2">{selectedCountryBrief.relations.map((relation) => <div key={`${relation.country}-${relation.type}`} className="rounded-xl border border-zinc-800 bg-zinc-900 p-3"><div className="flex items-center justify-between gap-3"><div className="text-sm text-zinc-100">{relation.country}</div><Badge className="border-zinc-700 bg-zinc-950 text-zinc-100">{relation.type}</Badge></div><div className="mt-2 text-xs text-zinc-400">{relation.note}</div></div>)}</div></div>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">Alliances</div><div className="mt-3 flex flex-wrap gap-2">{selectedCountryBrief.alliances.map((item) => <Badge key={item} className="border-cyan-400/20 bg-cyan-500/10 text-cyan-200">{item}</Badge>)}</div></div>
+                      <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">Tensions</div><div className="mt-3 flex flex-wrap gap-2">{selectedCountryBrief.tensions.map((item) => <Badge key={item} className="border-orange-400/20 bg-orange-500/10 text-orange-200">{item}</Badge>)}</div></div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-3 xl:grid-cols-2">{GLOBAL_BRIEFINGS.map((item) => <div key={item.id} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-sm text-zinc-100">{item.title}</div><div className="mt-2 text-sm text-zinc-300">{item.summary}</div><div className="mt-2 text-xs text-zinc-400">Why significant: {item.significance}</div><div className="mt-3 flex flex-wrap gap-2">{item.tags.map((tag) => <button key={tag} onClick={() => COUNTRY_INTEL[tag] && setSelectedCountry(tag)} className={`rounded-full border px-3 py-1 text-xs ${COUNTRY_INTEL[tag] ? "border-zinc-700 bg-zinc-900 text-zinc-100" : "border-zinc-800 bg-zinc-950 text-zinc-500"}`}>{tag}</button>)}</div></div>)}</div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-[28px] border-zinc-800 bg-zinc-900/60">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg"><Eye className="h-5 w-5 text-zinc-300" /> Event timeline</CardTitle>
+                <CardDescription className="text-zinc-400">Use the globe for place, then this for sequence.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between"><div className="text-sm text-zinc-400">Closest event at current time marker</div><Badge className="border-zinc-700 bg-zinc-900 text-zinc-100">T+ {timeline[0]} min</Badge></div>
+                <Slider value={timeline} onValueChange={setTimeline} min={0} max={100} step={1} />
+                <div className="grid gap-3 md:grid-cols-4">{LIVE_EVENTS.map((event) => <button key={event.t} onClick={() => setTimeline([event.t])} className={`rounded-2xl border p-4 text-left ${timelineEvent.t === event.t ? "border-cyan-400/40 bg-zinc-900" : "border-zinc-800 bg-zinc-950"}`}><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">T+ {event.t}</div><div className="mt-1 font-medium text-zinc-100">{event.title}</div><div className="mt-2 text-xs text-zinc-400">{event.detail}</div></button>)}</div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="space-y-6">
+            <Card className="rounded-[28px] border-zinc-800 bg-zinc-900/60">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg"><LocateFixed className="h-5 w-5 text-cyan-300" /> Selected asset</CardTitle>
+                <CardDescription className="text-zinc-400">Click any aircraft, vessel, or satellite for route, ownership, history, and inferred purpose.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-semibold text-zinc-100">{selectedDossier?.id || "No selection"}</div>
+                      <div className="text-xs text-zinc-400">{selectedDossier?.operator || "Pick a track from the globe or registry"}</div>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {selectedLive?.type && <Badge className={badgeTone(selectedLive.type, selectedLive.category)}>{selectedLive.category}</Badge>}
+                      {selectedLive?.vesselClass && <Badge className={vesselClassTone(selectedLive.vesselClass)}>{selectedLive.vesselClass}</Badge>}
+                    </div>
+                  </div>
+                  {selectedDossier && <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-zinc-400">
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-3">Nation / flag<br /><span className="text-zinc-100">{selectedDossier.nation}</span></div>
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-3">Type<br /><span className="text-zinc-100">{selectedDossier.type}</span></div>
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-3">Heading<br /><span className="text-zinc-100">{selectedDossier.heading} deg</span></div>
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-3">Speed<br /><span className="text-zinc-100">{selectedDossier.speed || "--"}</span></div>
+                  </div>}
+                  <div className="mt-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-3 text-xs text-zinc-300">
+                    <div className="text-zinc-100">Route / flight path</div>
+                    <div className="mt-1 text-zinc-400">{selectedDossier?.route || "No route available."}</div>
+                    {selectedDossier?.historySummary && <div className="mt-2 text-zinc-500">{selectedDossier.historySummary}</div>}
+                  </div>
+                  <div className="mt-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-3 text-xs text-zinc-300">
+                    <div className="text-zinc-100">Why this matters</div>
+                    <div className="mt-1 text-zinc-400">{selectedTrackSignificance}</div>
+                    {linkedCountryFromAsset && COUNTRY_INTEL[linkedCountryFromAsset] && <Button variant="outline" className="mt-3 border-zinc-700 bg-zinc-950 text-zinc-100" onClick={() => setSelectedCountry(linkedCountryFromAsset)}>Open {linkedCountryFromAsset} brief</Button>}
+                  </div>
+                  {selectedDossier?.prediction && <div className="mt-3 rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-3 text-xs text-cyan-200">
+                    <div className="text-zinc-100">Predicted purpose</div>
+                    <div className="mt-1">{selectedDossier.prediction.purpose}</div>
+                    <div className="mt-2 text-zinc-400">Confidence: {selectedDossier.prediction.confidence}</div>
+                  </div>}
+                </div>
+                {selectedMilitary && <div className="rounded-2xl border border-orange-400/15 bg-orange-500/5 p-4 text-xs text-zinc-300"><div className="grid grid-cols-2 gap-3"><div>Nation<br /><span className="text-zinc-100">{selectedMilitary.nation}</span></div><div>Service<br /><span className="text-zinc-100">{selectedMilitary.service}</span></div><div>Role<br /><span className="text-zinc-100">{selectedMilitary.role}</span></div><div>Priority<br /><span className="text-zinc-100">{selectedMilitary.priority}</span></div></div><div className="mt-3">Mission<br /><span className="text-zinc-100">{selectedMilitary.mission}</span></div><div className="mt-3">Theater<br /><span className="text-zinc-100">{selectedMilitary.theater}</span></div></div>}
+                <div className="grid grid-cols-2 gap-2 text-xs text-zinc-400"><div className="rounded-xl bg-zinc-950 p-3">Lat<br /><span className="text-zinc-200">{selectedLive?.lat?.toFixed(2) || "--"}</span></div><div className="rounded-xl bg-zinc-950 p-3">Lon<br /><span className="text-zinc-200">{selectedLive?.lon?.toFixed(2) || "--"}</span></div><div className="rounded-xl bg-zinc-950 p-3">Heading<br /><span className="text-zinc-200">{selectedLive ? `${Math.round(selectedLive.heading || 0)}°` : "--"}</span></div><div className="rounded-xl bg-zinc-950 p-3">Speed<br /><span className="text-zinc-200">{selectedLive ? Math.round(selectedLive.speed || 0) : "--"}</span></div></div>
+                {selectedLive?.chokepoints?.length > 0 && <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">Linked chokepoints</div><div className="mt-3 flex flex-wrap gap-2">{selectedLive.chokepoints.map((name) => <Badge key={name} className="border-zinc-700 bg-zinc-900 text-zinc-100">{name}</Badge>)}</div></div>}
+                {selectedLive?.chokepoints?.includes("Hormuz") && <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-xs text-red-100"><div className="font-medium text-zinc-100">Mine-claim overlay</div><div className="mt-2 text-zinc-300">This route intersects the Iran-claimed Hormuz mine-danger layer. Treat this as an unverified claim layer for routing awareness, not confirmed mine placement.</div></div>}
+                {selectedDossier?.sources?.length > 0 && <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">OSINT source model</div><div className="mt-3 flex flex-wrap gap-2">{selectedDossier.sources.map((source) => <Badge key={source} className="border-zinc-700 bg-zinc-900 text-zinc-100">{source}</Badge>)}</div></div>}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-[28px] border-zinc-800 bg-zinc-900/60">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg"><Ship className="h-5 w-5 text-emerald-300" /> Strait traffic</CardTitle>
+                <CardDescription className="text-zinc-400">All tagged traffic through chokepoints, regardless of country.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {chokepointTraffic.map((item) => (
+                  <div key={item.name} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div><div className="font-medium text-zinc-100">{item.name}</div><div className="text-xs text-zinc-400">{item.note}</div></div>
+                      <Badge className={item.severity === "high" ? "border-red-400/20 bg-red-500/10 text-red-200" : "border-zinc-700 bg-zinc-900 text-zinc-100"}>{item.tracks.length} tracks</Badge>
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-zinc-400">
+                      <div>Vessels<br /><span className="text-zinc-100">{item.vessels.length}</span></div>
+                      <div>Aircraft<br /><span className="text-zinc-100">{item.aircraft.length}</span></div>
+                      <div>Military<br /><span className="text-zinc-100">{item.military.length}</span></div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">{item.vesselClasses.map((kind) => <Badge key={kind.name} className={vesselClassTone(kind.name)}>{kind.name}: {kind.count}</Badge>)}</div>
+                    <div className="mt-3 space-y-2">{item.tracks.slice(0, 4).map((track) => <button key={track.id} onClick={() => selectTrack(track)} className="w-full rounded-xl border border-zinc-800 bg-zinc-900 p-2 text-left text-xs text-zinc-300"><span className="text-zinc-100">{track.id}</span> - {track.operator} - {track.type}</button>)}</div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-[28px] border-zinc-800 bg-zinc-900/60">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg"><Layers className="h-5 w-5 text-orange-300" /> Military brief</CardTitle>
+                <CardDescription className="text-zinc-400">Nation, service, theater, and priority breakdown for the military picture.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">Top nations</div><div className="mt-3 space-y-2 text-sm text-zinc-300">{militarySummary.nations.map((item) => <div key={item.name} className="flex items-center justify-between"><span>{item.name}</span><span className="text-zinc-100">{item.count}</span></div>)}</div></div>
+                <div className="grid gap-3 md:grid-cols-2"><div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">Services</div><div className="mt-3 space-y-2 text-sm text-zinc-300">{militarySummary.services.map((item) => <div key={item.name} className="flex items-center justify-between"><span>{item.name}</span><span className="text-zinc-100">{item.count}</span></div>)}</div></div><div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">Theaters</div><div className="mt-3 space-y-2 text-sm text-zinc-300">{militarySummary.theaters.map((item) => <div key={item.name} className="flex items-center justify-between"><span>{item.name}</span><span className="text-zinc-100">{item.count}</span></div>)}</div></div></div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="text-xs uppercase tracking-[0.16em] text-zinc-500">Priority bands</div><div className="mt-3 flex flex-wrap gap-2">{militarySummary.priorities.map((item) => <Badge key={item.name} className={item.name === "High" ? "border-red-400/20 bg-red-500/10 text-red-200" : item.name === "Elevated" ? "border-orange-400/20 bg-orange-500/10 text-orange-200" : "border-zinc-700 bg-zinc-900 text-zinc-100"}>{item.name}: {item.count}</Badge>)}</div></div>
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-[28px] border-zinc-800 bg-zinc-900/60">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg"><Activity className="h-5 w-5 text-emerald-300" /> Live feed</CardTitle>
+                <CardDescription className="text-zinc-400">Rolling updates generated from the moving world picture.</CardDescription>
+              </CardHeader>
+              <CardContent><div className="space-y-3">{liveFeed.map((entry) => <div key={entry.id} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="flex items-start justify-between gap-3"><div><div className="font-medium text-zinc-100">{entry.title}</div><div className="text-xs text-zinc-400">{formatClock(entry.ts)}</div></div><Badge className={entry.level === "warning" ? "border-orange-400/20 bg-orange-500/10 text-orange-200" : "border-zinc-700 bg-zinc-900 text-zinc-100"}>{entry.level}</Badge></div><div className="mt-2 text-sm text-zinc-300">{entry.detail}</div></div>)}</div></CardContent>
+            </Card>
+
+            <Tabs defaultValue="alerts">
+              <TabsList className="grid w-full grid-cols-2 bg-zinc-900/60"><TabsTrigger value="alerts">Alerts</TabsTrigger><TabsTrigger value="cameras">Cameras</TabsTrigger></TabsList>
+              <TabsContent value="alerts"><Card className="rounded-[28px] border-zinc-800 bg-zinc-900/60"><CardContent className="space-y-3 p-6">{LIVE_EVENTS.map((event) => <div key={event.t} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="flex items-start justify-between gap-3"><div><div className="font-medium text-zinc-100">{event.title}</div><div className="text-xs text-zinc-400">{event.region}</div></div><Badge className={event.severity === "high" ? "border-red-400/20 bg-red-500/10 text-red-200" : event.severity === "medium" ? "border-orange-400/20 bg-orange-500/10 text-orange-200" : "border-zinc-700 bg-zinc-900 text-zinc-100"}>{event.severity}</Badge></div><div className="mt-2 text-sm text-zinc-300">{event.detail}</div></div>)}</CardContent></Card></TabsContent>
+              <TabsContent value="cameras"><Card className="rounded-[28px] border-zinc-800 bg-zinc-900/60"><CardContent className="space-y-3 p-6">{CAMERAS.map((camera) => <div key={camera.name} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4"><div className="flex items-start justify-between gap-3"><div><div className="font-medium text-zinc-100">{camera.name}</div><div className="text-xs text-zinc-400">{camera.city}</div></div><Camera className="h-4 w-4 text-zinc-400" /></div><div className="mt-3 rounded-xl border border-dashed border-zinc-700 bg-zinc-900/60 p-5 text-center text-xs text-zinc-500">{camera.note}</div></div>)}</CardContent></Card></TabsContent>
+            </Tabs>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
