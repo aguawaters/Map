@@ -70,3 +70,13 @@ Use VS Code's debugger with the provided launch configuration to debug in Chrome
 npm run build
 npm run preview
 ```
+
+## Deployment
+
+Pushing to `main` deploys the app to GitHub Pages through `.github/workflows/deploy-pages.yml`.
+
+Public URL:
+
+```text
+https://aguawaters.github.io/Map/
+```
