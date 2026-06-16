@@ -5,11 +5,12 @@ import { BriefingPanel } from "@/components/BriefingPanel";
 import { ControlsPanel } from "@/components/ControlsPanel";
 import { GlobeSurface } from "@/components/GlobeSurface";
 import { RegistryPanel } from "@/components/RegistryPanel";
-import { ChokepointPanel, LiveFeedPanel, MilitaryBriefPanel } from "@/components/RightRailPanels";
+import { ChokepointPanel, LiveFeedPanel, MilitaryBriefPanel, OsintPanel } from "@/components/RightRailPanels";
 import { TimelinePanel } from "@/components/TimelinePanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { OSINT_RESOURCE_CATALOG } from "@/data/osintSources";
 import {
   buildInitialTracks,
   buildLiveEntries,
@@ -23,8 +24,10 @@ import {
   validateTracks,
 } from "@/lib/tracks";
 import { hasLonLat } from "@/lib/utils";
+import { fetchLiveOsintSnapshot } from "@/services/osintFeeds";
 
 const BASELINE_TRACKS = buildInitialTracks();
+const OSINT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 const DEFAULT_FILTERS = {
   query: "",
@@ -39,6 +42,14 @@ const DEFAULT_DISPLAY = {
   trails: true,
   routes: true,
   chokepoints: true,
+  osint: true,
+};
+
+const DEFAULT_OSINT_STATUS = {
+  state: "idle",
+  generatedAt: null,
+  sources: [],
+  error: null,
 };
 
 function buildInitialHistory(tracks) {
@@ -65,6 +76,9 @@ export default function PublicSituationalAwarenessDashboard() {
   const [refreshMs, setRefreshMs] = useState([1200]);
   const [selectedCountry, setSelectedCountry] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(new Date());
+  const [osintEnabled, setOsintEnabled] = useState(true);
+  const [osintEvents, setOsintEvents] = useState([]);
+  const [osintStatus, setOsintStatus] = useState(DEFAULT_OSINT_STATUS);
   const [liveFeed, setLiveFeed] = useState(() => [
     { id: "boot-0", ts: new Date(), level: "info", title: "Live feed ready", detail: "Simulated global watch surface online." },
     { id: "boot-1", ts: new Date(), level: "info", title: "Global traffic baseline", detail: `${BASELINE_TRACKS.filter((track) => track.type === "aircraft").length} air tracks and ${BASELINE_TRACKS.filter((track) => track.type === "vessel").length} maritime tracks initialized.` },
@@ -99,6 +113,67 @@ export default function PublicSituationalAwarenessDashboard() {
     return () => window.clearInterval(timer);
   }, [liveMode, playing, refreshMs]);
 
+  useEffect(() => {
+    if (!osintEnabled) {
+      setOsintEvents([]);
+      setOsintStatus(DEFAULT_OSINT_STATUS);
+      return undefined;
+    }
+
+    let active = true;
+
+    const refresh = async () => {
+      setOsintStatus((current) => ({
+        ...current,
+        state: current.sources.length > 0 ? "refreshing" : "loading",
+        error: null,
+      }));
+
+      try {
+        const snapshot = await fetchLiveOsintSnapshot();
+        if (!active) return;
+
+        setOsintEvents(snapshot.events);
+        setOsintStatus({
+          state: snapshot.state,
+          generatedAt: snapshot.generatedAt,
+          sources: snapshot.sources,
+          error: null,
+        });
+        setLiveFeed((current) => [{
+          id: `osint-${Date.now()}`,
+          ts: new Date(snapshot.generatedAt),
+          level: snapshot.state === "error" ? "warning" : "info",
+          title: "OSINT refresh",
+          detail: `${snapshot.events.length} public events from ${snapshot.sources.filter((source) => source.ok).length}/${snapshot.sources.length} live feeds.`,
+        }, ...current].slice(0, 26));
+      } catch (error) {
+        if (!active) return;
+
+        const message = String(error?.message || error || "OSINT refresh failed.");
+        setOsintStatus((current) => ({
+          ...current,
+          state: "error",
+          error: message,
+        }));
+        setLiveFeed((current) => [{
+          id: `osint-error-${Date.now()}`,
+          ts: new Date(),
+          level: "warning",
+          title: "OSINT refresh failed",
+          detail: message,
+        }, ...current].slice(0, 26));
+      }
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, OSINT_REFRESH_INTERVAL_MS);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [osintEnabled]);
+
   const safeTracks = useMemo(() => tracks.filter(hasLonLat), [tracks]);
   const filteredTracks = useMemo(() => filterTracks(safeTracks, filters), [filters, safeTracks]);
   const selectedTrack = useMemo(() => safeTracks.find((track) => track.id === selectedId) || filteredTracks[0] || safeTracks[0] || null, [filteredTracks, safeTracks, selectedId]);
@@ -130,7 +205,7 @@ export default function PublicSituationalAwarenessDashboard() {
     setFilters(DEFAULT_FILTERS);
     setDisplay(DEFAULT_DISPLAY);
     setLastUpdated(new Date());
-    setLiveFeed([{ id: `boot-${Date.now()}`, ts: new Date(), level: "info", title: "Feed reset", detail: "Live stream reset to baseline simulated state." }]);
+    setLiveFeed([{ id: `boot-${Date.now()}`, ts: new Date(), level: "info", title: "Feed reset", detail: "Synthetic track model reset. Public OSINT layers will continue refreshing separately." }]);
   };
 
   return (
@@ -152,6 +227,10 @@ export default function PublicSituationalAwarenessDashboard() {
               lastUpdated={lastUpdated}
               militarySummary={militarySummary}
               validationErrors={validationErrors}
+              osintEnabled={osintEnabled}
+              setOsintEnabled={setOsintEnabled}
+              osintStatus={osintStatus}
+              osintEventCount={osintEvents.length}
             />
             <RegistryPanel tracks={filteredTracks} selectedId={selectedTrack?.id} onSelect={selectTrack} />
           </div>
@@ -164,7 +243,7 @@ export default function PublicSituationalAwarenessDashboard() {
                     <CardTitle className="flex items-center gap-3 text-2xl">
                       <GlobeIcon className="h-6 w-6 text-cyan-300" /> Stable map
                     </CardTitle>
-                    <CardDescription className="mt-2 text-zinc-400">Deterministic SVG globe with synthetic air, sea, and orbital tracks.</CardDescription>
+                    <CardDescription className="mt-2 text-zinc-400">Deterministic SVG globe with synthetic air, sea, and orbital tracks plus clearly separated public OSINT overlays.</CardDescription>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Badge className={liveMode ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-200" : "border-zinc-700 bg-zinc-900 text-zinc-400"}>{liveStatus}</Badge>
@@ -189,6 +268,8 @@ export default function PublicSituationalAwarenessDashboard() {
                   setDisplay={setDisplay}
                   stats={stats}
                   history={history}
+                  osintEvents={osintEvents}
+                  osintEnabled={osintEnabled}
                 />
               </CardContent>
             </Card>
@@ -202,6 +283,7 @@ export default function PublicSituationalAwarenessDashboard() {
             <ChokepointPanel items={chokepointTraffic} onSelect={selectTrack} />
             <MilitaryBriefPanel summary={militarySummary} />
             <LiveFeedPanel entries={liveFeed} />
+            <OsintPanel status={osintStatus} events={osintEvents} resources={OSINT_RESOURCE_CATALOG} />
           </div>
         </div>
       </div>

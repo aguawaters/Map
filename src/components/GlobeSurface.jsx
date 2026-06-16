@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { feature } from "topojson-client";
-import { geoDistance, geoGraticule10, geoOrthographic, geoPath } from "d3-geo";
+import { geoCentroid, geoDistance, geoGraticule10, geoOrthographic, geoPath } from "d3-geo";
 import countriesAtlas from "world-atlas/countries-110m.json";
-import { Globe as GlobeIcon, LocateFixed, Plane, RotateCcw, Satellite, Ship } from "lucide-react";
+import { Globe as GlobeIcon, LocateFixed, Plane, Radio, RotateCcw, Satellite, Ship } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CHOKEPOINTS, CITY_LABELS, COUNTRY_LABELS, NO_FLY_ZONES, REGION_KEYS, REGION_PRESETS } from "@/data/constants";
+import { CHOKEPOINTS, CITY_LABELS, NO_FLY_ZONES, REGION_KEYS, REGION_PRESETS } from "@/data/constants";
 import { AIRPORTS, AIR_ROUTES, PORTS, SEA_LANES } from "@/data/mockAssets";
 import { buildArcPoints } from "@/lib/geo";
-import { pointColor } from "@/lib/styles";
+import { osintPointColor, pointColor } from "@/lib/styles";
 import { clamp, hasLonLat, normalizeLon } from "@/lib/utils";
 
 function projectPoint(projection, lon, lat) {
@@ -17,13 +17,37 @@ function projectPoint(projection, lon, lat) {
   return point && Number.isFinite(point[0]) && Number.isFinite(point[1]) ? point : null;
 }
 
-export function GlobeSurface({ tracks, selectedId, onSelect, regionKey, setRegionKey, display, setDisplay, stats, history }) {
+function buildCountryLabels(countryFeatures) {
+  return countryFeatures
+    .map((country) => {
+      const name = country.properties?.name;
+      const [lon, lat] = geoCentroid(country);
+      if (!name || !Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+      return { name, lon: normalizeLon(lon), lat };
+    })
+    .filter(Boolean);
+}
+
+export function GlobeSurface({
+  tracks,
+  selectedId,
+  onSelect,
+  regionKey,
+  setRegionKey,
+  display,
+  setDisplay,
+  stats,
+  history,
+  osintEvents,
+  osintEnabled,
+}) {
   const mapHostRef = useRef(null);
   const dragRef = useRef(null);
   const viewRef = useRef(null);
   const rafRef = useRef(null);
   const interactionTimerRef = useRef(null);
   const countryFeatures = useMemo(() => feature(countriesAtlas, countriesAtlas.objects.countries).features, []);
+  const countryLabels = useMemo(() => buildCountryLabels(countryFeatures), [countryFeatures]);
   const [view, setView] = useState(() => {
     const preset = REGION_PRESETS[regionKey] || REGION_PRESETS.global;
     return { lon: preset.lng, lat: preset.lat, scale: Math.round(260 / preset.altitude) };
@@ -87,6 +111,17 @@ export function GlobeSurface({ tracks, selectedId, onSelect, regionKey, setRegio
 
   const visibleTracks = useMemo(() => tracks.filter((track) => isFront(track.lon, track.lat)), [tracks, view.lat, view.lon]);
 
+  const visibleOsintEvents = useMemo(() => {
+    if (!osintEnabled || !display.osint || mapMoving) return [];
+    return osintEvents
+      .filter((item) => hasLonLat(item) && isFront(item.lon, item.lat))
+      .map((item) => {
+        const point = projectPoint(projection, item.lon, item.lat);
+        return point ? { ...item, x: point[0], y: point[1] } : null;
+      })
+      .filter(Boolean);
+  }, [display.osint, isFront, mapMoving, osintEnabled, osintEvents, projection]);
+
   const airArcs = useMemo(() => {
     if (!display.routes || mapMoving) return [];
     return AIR_ROUTES.map((route, index) => {
@@ -111,16 +146,17 @@ export function GlobeSurface({ tracks, selectedId, onSelect, regionKey, setRegio
 
   const projectedCountryLabels = useMemo(() => {
     if (!display.labels || mapMoving) return [];
-    return COUNTRY_LABELS.filter((item) => isFront(item.lon, item.lat))
+    return countryLabels
+      .filter((item) => isFront(item.lon, item.lat))
       .map((item) => {
         const point = projectPoint(projection, item.lon, item.lat);
         return point ? { ...item, x: point[0], y: point[1] } : null;
       })
       .filter(Boolean);
-  }, [display.labels, mapMoving, projection, view.lat, view.lon]);
+  }, [countryLabels, display.labels, mapMoving, projection, view.lat, view.lon]);
 
   const projectedCityLabels = useMemo(() => {
-    if (!display.labels || mapMoving || view.scale <= 360) return [];
+    if (!display.labels || mapMoving || view.scale <= 420) return [];
     return CITY_LABELS.filter((item) => isFront(item.lon, item.lat))
       .map((item) => {
         const point = projectPoint(projection, item.lon, item.lat);
@@ -195,6 +231,7 @@ export function GlobeSurface({ tracks, selectedId, onSelect, regionKey, setRegio
             <Badge className="border-emerald-400/20 bg-emerald-400/10 text-emerald-200">{stats.vessels} vessels</Badge>
             <Badge className="border-orange-400/20 bg-orange-500/10 text-orange-200">{stats.militaryVessels} naval / military</Badge>
             <Badge className="border-violet-400/20 bg-violet-400/10 text-violet-200">{stats.satellites} satellites</Badge>
+            {osintEnabled && <Badge className="border-sky-400/20 bg-sky-500/10 text-sky-200">{osintEvents.length} public OSINT events</Badge>}
           </div>
           <div className="text-xs text-zinc-400">Drag rotates. Wheel zooms inside the globe.</div>
         </div>
@@ -211,6 +248,11 @@ export function GlobeSurface({ tracks, selectedId, onSelect, regionKey, setRegio
           <Badge className="border-violet-400/20 bg-violet-500/15 text-violet-200">
             <Satellite className="mr-2 h-4 w-4" /> Satellites
           </Badge>
+          {osintEnabled && (
+            <Badge className="border-sky-400/20 bg-sky-500/10 text-sky-200">
+              <Radio className="mr-2 h-4 w-4" /> Public OSINT
+            </Badge>
+          )}
         </div>
 
         <div ref={mapHostRef} className="overflow-hidden rounded-[24px] border border-zinc-800 bg-black" style={{ overscrollBehavior: "contain", touchAction: "none" }}>
@@ -301,9 +343,37 @@ export function GlobeSurface({ tracks, selectedId, onSelect, regionKey, setRegio
               );
             })}
 
+            {visibleOsintEvents.map((item) => (
+              <g
+                key={item.id}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (item.link) window.open(item.link, "_blank", "noopener,noreferrer");
+                }}
+                className="cursor-pointer"
+              >
+                <circle cx={item.x} cy={item.y} r="11" fill={osintPointColor(item.severity)} fillOpacity="0.14" stroke={osintPointColor(item.severity)} strokeOpacity="0.5" strokeWidth="1" />
+                <circle cx={item.x} cy={item.y} r="4" fill={osintPointColor(item.severity)} />
+                {display.labels && view.scale > 480 && (
+                  <text x={item.x + 8} y={item.y - 8} fill={osintPointColor(item.severity)} fontSize="9.5">
+                    {item.sourceName.replace(" Earthquakes", "").replace(" Alerts", "")}
+                  </text>
+                )}
+              </g>
+            ))}
+
             {projectedCountryLabels.map((label) => (
-              <text key={label.name} x={label.x} y={label.y} textAnchor="middle" fill="rgba(255,255,255,0.84)" fontSize={view.scale > 700 ? 12 : 10.5}>
-                {label.name.toUpperCase()}
+              <text
+                key={label.name}
+                x={label.x}
+                y={label.y}
+                textAnchor="middle"
+                fill="rgba(255,255,255,0.84)"
+                fontSize={view.scale > 1000 ? 10 : view.scale > 700 ? 8.8 : 7.4}
+                style={{ paintOrder: "stroke", stroke: "rgba(2,6,23,0.85)", strokeWidth: 2 }}
+              >
+                {label.name}
               </text>
             ))}
             {projectedCityLabels.map((label) => (
@@ -329,7 +399,7 @@ export function GlobeSurface({ tracks, selectedId, onSelect, regionKey, setRegio
         <Button variant="outline" className="justify-start border-zinc-700 bg-zinc-950 text-zinc-300" onClick={() => setRegionKey("global")}>
           <GlobeIcon className="mr-2 h-4 w-4" /> Reset view
         </Button>
-        <Button variant="outline" className="justify-start border-zinc-700 bg-zinc-950 text-zinc-300" onClick={() => setDisplay({ labels: true, trails: true, routes: true, chokepoints: true })}>
+        <Button variant="outline" className="justify-start border-zinc-700 bg-zinc-950 text-zinc-300" onClick={() => setDisplay({ labels: true, trails: true, routes: true, chokepoints: true, osint: true })}>
           <RotateCcw className="mr-2 h-4 w-4" /> Restore layers
         </Button>
       </div>

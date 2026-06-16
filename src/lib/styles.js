@@ -26,3 +26,15 @@ export function vesselClassTone(vesselClass) {
   };
   return tones[vesselClass] || "border-zinc-700 bg-zinc-900 text-zinc-100";
 }
+
+export function osintSeverityTone(severity) {
+  if (severity === "high") return "border-red-400/20 bg-red-500/10 text-red-200";
+  if (severity === "medium") return "border-amber-400/20 bg-amber-500/10 text-amber-200";
+  return "border-sky-400/20 bg-sky-500/10 text-sky-200";
+}
+
+export function osintPointColor(severity) {
+  if (severity === "high") return "#f87171";
+  if (severity === "medium") return "#fbbf24";
+  return "#38bdf8";
+}

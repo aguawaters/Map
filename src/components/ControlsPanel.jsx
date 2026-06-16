@@ -1,11 +1,11 @@
-import { Activity, Layers, Search } from "lucide-react";
+import { Activity, Layers, Radio, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { VESSEL_CLASS_OPTIONS } from "@/data/constants";
-import { vesselClassTone } from "@/lib/styles";
+import { osintSeverityTone, vesselClassTone } from "@/lib/styles";
 import { formatClock } from "@/lib/utils";
 
 export function ControlsPanel({
@@ -22,6 +22,10 @@ export function ControlsPanel({
   lastUpdated,
   militarySummary,
   validationErrors,
+  osintEnabled,
+  setOsintEnabled,
+  osintStatus,
+  osintEventCount,
 }) {
   const updateFilters = (patch) => setFilters((current) => ({ ...current, ...patch }));
   const toggleType = (type) => {
@@ -38,7 +42,7 @@ export function ControlsPanel({
         <CardTitle className="flex items-center gap-2 text-lg">
           <Search className="h-5 w-5 text-cyan-300" /> Controls
         </CardTitle>
-        <CardDescription className="text-zinc-400">Filter tracks and tune the simulated live view.</CardDescription>
+        <CardDescription className="text-zinc-400">Filter tracks, tune the simulator, and layer in public feeds without mixing them up.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <Input value={filters.query} onChange={(event) => updateFilters({ query: event.target.value })} placeholder="Search track, operator, route, airport, port" className="border-zinc-700 bg-zinc-950" />
@@ -96,9 +100,7 @@ export function ControlsPanel({
               <Activity className={`h-4 w-4 ${liveMode ? "text-emerald-300" : "text-zinc-500"}`} />
               <div>
                 <div className="text-sm font-medium text-zinc-100">Live stream</div>
-                <div className="text-xs text-zinc-400">
-                  {liveStatus} • last update {formatClock(lastUpdated)}
-                </div>
+                <div className="text-xs text-zinc-400">{liveStatus} • last update {formatClock(lastUpdated)}</div>
               </div>
             </div>
             <Switch checked={liveMode} onCheckedChange={setLiveMode} />
@@ -113,6 +115,31 @@ export function ControlsPanel({
         </div>
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-3">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Radio className={`h-4 w-4 ${osintEnabled ? "text-sky-300" : "text-zinc-500"}`} />
+              <div>
+                <div className="text-sm font-medium text-zinc-100">Public OSINT feeds</div>
+                <div className="text-xs text-zinc-400">{osintEnabled ? `${osintStatus.state} • ${osintEventCount} live events` : "Disabled"}</div>
+              </div>
+            </div>
+            <Switch checked={osintEnabled} onCheckedChange={setOsintEnabled} />
+          </div>
+          <div className="space-y-2 text-xs text-zinc-400">
+            {osintStatus.sources.length === 0 && <div>Browser-safe feeds: USGS, NASA EONET, and NWS alerts.</div>}
+            {osintStatus.sources.map((source) => (
+              <div key={source.id} className="flex items-center justify-between gap-3">
+                <span>{source.name}</span>
+                <Badge className={source.ok ? osintSeverityTone("low") : osintSeverityTone("medium")}>
+                  {source.ok ? `${source.count} events` : "unavailable"}
+                </Badge>
+              </div>
+            ))}
+            {osintStatus.error && <div className="text-orange-200">{osintStatus.error}</div>}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-3">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-100">
             <Layers className="h-4 w-4 text-violet-300" /> Map layers
           </div>
@@ -122,6 +149,7 @@ export function ControlsPanel({
               ["trails", "Trails"],
               ["routes", "Route lines"],
               ["chokepoints", "Chokepoints"],
+              ["osint", "OSINT overlays"],
             ].map(([key, label]) => (
               <button key={key} onClick={() => toggleDisplay(key)} className={`rounded-xl border px-3 py-2 text-left text-sm ${display[key] ? "border-cyan-400/50 bg-zinc-900 text-zinc-100" : "border-zinc-800 bg-zinc-950 text-zinc-400"}`}>
                 {label} {display[key] ? "On" : "Off"}

@@ -2,9 +2,9 @@ import { Layers } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getMilitaryProfile } from "@/lib/tracks";
-import { badgeTone, vesselClassTone } from "@/lib/styles";
 import { TrackIcon } from "@/components/TrackIcon";
+import { badgeTone, vesselClassTone } from "@/lib/styles";
+import { getMilitaryProfile } from "@/lib/tracks";
 
 function RegistryRow({ track, selectedId, onSelect }) {
   const military = getMilitaryProfile(track);
@@ -43,12 +43,8 @@ function RegistryRow({ track, selectedId, onSelect }) {
       )}
       {military && (
         <div className="mt-3 rounded-xl border border-orange-400/15 bg-orange-500/5 p-2 text-[11px] text-zinc-300">
-          <div>
-            {military.nation} • {military.service}
-          </div>
-          <div className="text-zinc-400">
-            {military.role}, {military.mission}
-          </div>
+          <div>{military.nation} • {military.service}</div>
+          <div className="text-zinc-400">{military.role}, {military.mission}</div>
         </div>
       )}
     </button>
